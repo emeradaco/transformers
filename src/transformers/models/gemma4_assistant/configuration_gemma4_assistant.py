@@ -16,9 +16,9 @@ from typing import Any
 
 from huggingface_hub.dataclasses import strict
 
-from ...configuration_utils import PreTrainedConfig, SubConfigSpec
+from ...configuration_utils import PreTrainedConfig
 from ...utils import auto_docstring, logging
-from ..auto import AutoConfig
+from ..auto import CONFIG_MAPPING, AutoConfig
 
 
 logger = logging.get_logger(__name__)
@@ -61,9 +61,12 @@ class Gemma4AssistantConfig(PreTrainedConfig):
     ```"""
 
     model_type = "gemma4_assistant"
-    sub_configs_defaults = {"text_config": SubConfigSpec(config_class=AutoConfig, model_type="gemma4_text")}
+    sub_configs = {
+        "text_config": AutoConfig,
+    }
 
     text_config: PreTrainedConfig | dict[str, Any] | None = None
+
     backbone_hidden_size: int = 1536
     use_ordered_embeddings: bool = False
     num_centroids: int = 2048
@@ -71,11 +74,15 @@ class Gemma4AssistantConfig(PreTrainedConfig):
     tie_word_embeddings: bool = True
 
     def __post_init__(self, **kwargs):
-        super().__post_init__(**kwargs)
+        if isinstance(self.text_config, dict):
+            self.text_config = CONFIG_MAPPING[self.text_config.get("model_type", "gemma4_text")](**self.text_config)
+
         # Assistant reuses the shared kvs across all layers to skip their calculation
         # I.e. it acts as cache shared across the layers
         if self.text_config is not None and not self.text_config.num_kv_shared_layers:
             self.text_config.num_kv_shared_layers = self.text_config.num_hidden_layers
+
+        super().__post_init__(**kwargs)
 
     def validate_architecture(self):
         text_config: PreTrainedConfig | None = self.text_config

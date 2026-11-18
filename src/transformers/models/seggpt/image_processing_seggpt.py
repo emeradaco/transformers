@@ -32,8 +32,7 @@ from ...image_utils import (
     SizeDict,
 )
 from ...processing_utils import ImagesKwargs, Unpack
-from ...utils import TensorType, auto_docstring
-from ...utils.import_utils import requires
+from ...utils import TensorType, auto_docstring, requires_backends
 
 
 # See https://huggingface.co/papers/2212.02499 at 3.1 Redefining Output Spaces as "Images" - Semantic Segmentation
@@ -253,7 +252,6 @@ class SegGptImageProcessor(TorchvisionBackend):
 
         return reorder_images(processed_images_grouped, grouped_images_index)
 
-    @requires(backends=("torch",))
     def post_process_semantic_segmentation(
         self,
         outputs,
@@ -288,6 +286,8 @@ class SegGptImageProcessor(TorchvisionBackend):
             `(height, width)`) and `segmentation_scores` (shape `(num_labels+1, height, width)`). In both cases,
             `(height, width)` corresponds to the target size (if `target_sizes` is specified).
         """
+
+        requires_backends(self, ["torch"])
 
         # batch_size x num_channels x 2*height x width
         masks = outputs.pred_masks

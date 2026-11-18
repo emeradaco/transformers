@@ -196,12 +196,10 @@ class Wav2Vec2CTCTokenizer(PreTrainedTokenizer):
         self.encoder = self.vocab[target_lang]
         self.decoder = {v: k for k, v in self.encoder.items()}
 
-        # Remove conflicting entries from both added-token dicts so vocabulary tokens take
-        # precedence; leaving the encoder entry behind makes the removed token encode to an
-        # id that now belongs to an unrelated vocabulary token
+        # Remove conflicting entries from _added_tokens_decoder so vocabulary tokens take precedence
         for token_id in list(self._added_tokens_decoder.keys()):
             if token_id in self.decoder:
-                self._added_tokens_encoder.pop(self._added_tokens_decoder.pop(token_id).content, None)
+                del self._added_tokens_decoder[token_id]
 
         # make sure that tokens made of several
         # characters are not split at tokenization

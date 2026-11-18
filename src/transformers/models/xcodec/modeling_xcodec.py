@@ -41,12 +41,12 @@ class XcodecOutput(ModelOutput):
     Args:
         audio_codes (`torch.LongTensor`  of shape `(batch_size, num_quantizers, codes_length)`, *optional*):
             Discrete code indices computed using `model.encode`.
-        audio_values (`torch.Tensor` of shape `(batch_size, channels, num_samples)`, *optional*)
+        audio_values (`torch.FloatTensor` of shape `(batch_size, channels, num_samples)`, *optional*)
             Decoded audio values obtained using the decoder part of Xcodec.
     """
 
     audio_codes: torch.LongTensor | None = None
-    audio_values: torch.Tensor | None = None
+    audio_values: torch.FloatTensor | None = None
 
 
 @dataclass
@@ -64,11 +64,11 @@ class XcodecEncoderOutput(ModelOutput):
 class XcodecDecoderOutput(ModelOutput):
     """
     Args:
-        audio_values (`torch.Tensor`  of shape `(batch_size, channels, num_samples)`, *optional*):
+        audio_values (`torch.FloatTensor`  of shape `(batch_size, channels, num_samples)`, *optional*):
             Decoded audio values obtained using the decoder part of Xcodec.
     """
 
-    audio_values: torch.Tensor | None = None
+    audio_values: torch.FloatTensor | None = None
 
 
 class XcodecResidualUnit(nn.Module):
@@ -329,12 +329,13 @@ class XcodecPreTrainedModel(PreTrainedAudioTokenizerBase):
     models.
     """
 
-    config: XcodecConfig
+    config_class = XcodecConfig
     base_model_prefix = "xcodec"
     main_input_name = "input_values"
     input_modalities = "audio"
     _no_split_modules = ["XcodecResidualVectorQuantization"]
 
+    @torch.no_grad()
     def _init_weights(self, module):
         """Initialize the weights"""
         if isinstance(module, nn.Linear):
@@ -442,7 +443,7 @@ class XcodecPreTrainedModel(PreTrainedAudioTokenizerBase):
 
 @auto_docstring(custom_intro="""The Xcodec neural audio codec model.""")
 class XcodecModel(XcodecPreTrainedModel):
-    def __init__(self, config: XcodecConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.config = config
         self.pad = config.hop_length // 2
@@ -475,7 +476,7 @@ class XcodecModel(XcodecPreTrainedModel):
         if hasattr(decoder, "tanh") and isinstance(decoder.tanh, nn.Tanh):
             decoder.tanh = nn.Identity()
 
-    def _extract_semantic_features(self, input_values: torch.Tensor) -> torch.Tensor:
+    def _extract_semantic_features(self, input_values: torch.FloatTensor) -> torch.FloatTensor:
         input_values = input_values[:, 0, :]
         input_values = F.pad(input_values, (self.pad, self.pad))
         with torch.no_grad():
@@ -493,7 +494,7 @@ class XcodecModel(XcodecPreTrainedModel):
         return_dict: bool | None = None,
     ) -> torch.Tensor | XcodecEncoderOutput:
         r"""
-        input_values (`torch.Tensor` of shape `(batch_size, channels, num_samples)`):
+        input_values (`torch.FloatTensor` of shape `(batch_size, channels, num_samples)`):
             Float values of the input audio waveform.
         bandwidth (`float`, *optional*):
             The target bandwidth in (kbps) supports only values in `config.target_bandwidths`.
@@ -575,7 +576,7 @@ class XcodecModel(XcodecPreTrainedModel):
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor] | XcodecOutput:
         r"""
-        input_values (`torch.Tensor` of shape `(batch_size, channels, num_samples)`):
+        input_values (`torch.FloatTensor` of shape `(batch_size, channels, num_samples)`):
             The raw float values of the input audio waveform.
         audio_codes (`torch.LongTensor`  of shape `(batch_size, num_quantizers, codes_length)`:
             Discrete code indices computed using `model.encode`.

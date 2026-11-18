@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 
-from ...cache_utils import BaseQuantizedLayer, DynamicCache, QuantizedCache, StaticCache
+from ...cache_utils import DynamicCache, QuantizedCache, QuantizedLayer, StaticCache
 from ...generation import (
     GenerateDecoderOnlyOutput,
     GenerationConfig,
@@ -49,11 +49,11 @@ class VibeVoiceGenerateOutput(GenerateDecoderOnlyOutput):
     Outputs of VibeVoiceForConditionalGeneration.generate.
 
     Args:
-        audio (`list(torch.Tensor)` of length `batch_size`):
+        audio (`list(torch.FloatTensor)` of length `batch_size`):
             The generated audio.
     """
 
-    audio: list[torch.Tensor] | None = None
+    audio: list[torch.FloatTensor] | None = None
 
 
 class VibeVoiceTokenConstraintProcessor(LogitsProcessor):
@@ -72,7 +72,7 @@ class VibeVoiceTokenConstraintProcessor(LogitsProcessor):
         self.logits_mask = logits_mask.to(device)
 
     @add_start_docstrings(LOGITS_PROCESSOR_INPUTS_DOCSTRING)
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.Tensor) -> torch.Tensor:
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
         return scores + self.logits_mask
 
 
@@ -263,7 +263,7 @@ class VibeVoiceGenerationMixin(GenerationMixin):
         not over-allocated to the positive branch's length. Only the code paths exercised by VibeVoice are kept:
         decoder-only dynamic and static caches.
         """
-        cache_name = "cache"
+        cache_name = "past_key_values"
 
         # Quick escape route 1: if the user specifies a cache, we only need to check for conflicting arguments.
         user_defined_cache = model_kwargs.get(cache_name)
@@ -274,7 +274,9 @@ class VibeVoiceGenerationMixin(GenerationMixin):
                     "Cache object) is unsupported. Please use only one of the two."
                 )
             if isinstance(user_defined_cache, tuple):
-                raise ValueError("Passing a tuple of `cache` is not supported anymore. Please use a `Cache` instance.")
+                raise ValueError(
+                    "Passing a tuple of `past_key_values` is not supported anymore. Please use a `Cache` instance."
+                )
             return
 
         # Quick escape route 2: if the user specifies no cache is to be used.
@@ -393,11 +395,11 @@ class VibeVoiceGenerationMixin(GenerationMixin):
         negative_input_ids[:, -1] = torch.where(
             diffusion_start_mask, torch.full_like(last_input_id, self.config.audio_bos_token_id), last_input_id
         )
-        if negative_model_kwargs.get("cache") is not None:
+        if negative_model_kwargs.get("past_key_values") is not None:
             mask_4d = diffusion_start_mask.view(-1, 1, 1, 1)
             # Reset the KV cache
-            for layer in negative_model_kwargs["cache"].layers:
-                if isinstance(layer, BaseQuantizedLayer):
+            for layer in negative_model_kwargs["past_key_values"].layers:
+                if isinstance(layer, QuantizedLayer):
                     continue
                 if layer.keys is not None and layer.values is not None:
                     layer_mask_4d = mask_4d.to(layer.keys.device)
@@ -412,7 +414,7 @@ class VibeVoiceGenerationMixin(GenerationMixin):
         self,
         diffusion_mask: torch.Tensor,
         next_tokens: torch.LongTensor,
-        inputs_embeds: torch.Tensor | None,
+        inputs_embeds: torch.FloatTensor | None,
         negative_input_ids: torch.LongTensor,
         negative_model_kwargs: dict,
         negative_forward: Callable,
@@ -448,12 +450,12 @@ class VibeVoiceGenerationMixin(GenerationMixin):
 
     def _sample_audio_latent(
         self,
-        positive_condition: torch.Tensor,
-        negative_condition: torch.Tensor,
+        positive_condition: torch.FloatTensor,
+        negative_condition: torch.FloatTensor,
         noise_scheduler: Any,
         num_diffusion_steps: int,
         guidance_scale: float,
-    ) -> torch.Tensor:
+    ) -> torch.FloatTensor:
         """
         Run the diffusion denoising loop with classifier-free guidance. Adapted from `sample_speech_tokens` in the
         original implementation: https://github.com/vibevoice-community/VibeVoice/blob/07cb79feadd2d3fd7f47530d4c964a12857936a0/vibevoice/modular/modeling_vibevoice_inference.py#L700
@@ -479,7 +481,7 @@ class VibeVoiceGenerationMixin(GenerationMixin):
 
     def _decode_audio_latent(
         self,
-        audio_latent: torch.Tensor,
+        audio_latent: torch.FloatTensor,
         diffusion_mask: torch.Tensor,
         batch_size: int,
         acoustic_cache: VibeVoiceAcousticTokenizerConv1dPaddingCache | None,
@@ -686,8 +688,8 @@ class VibeVoiceGenerationMixin(GenerationMixin):
                 )
                 audio_output = self._decode_audio_latent(audio_latent, diffusion_mask, batch_size, acoustic_cache)
                 acoustic_cache = audio_output.padding_cache
-                for sample_idx in diffusion_mask.nonzero(as_tuple=False).view(-1):
-                    audio_chunks[sample_idx.item()].append(audio_output.audio[sample_idx])
+                for i, sample_idx in enumerate(diffusion_mask.nonzero(as_tuple=False).view(-1)):
+                    audio_chunks[sample_idx.item()].append(audio_output.audio[i])
 
                 # prepare inputs for next LM step
                 semantic_outputs = self.model.semantic_tokenizer_encoder(
@@ -737,7 +739,7 @@ class VibeVoiceGenerationMixin(GenerationMixin):
                 logits=raw_logits,
                 attentions=decoder_attentions,
                 hidden_states=decoder_hidden_states,
-                cache=cache,
+                past_key_values=cache,
                 audio=generated_audio,
             )
         else:

@@ -41,20 +41,20 @@ logger = logging.get_logger(__name__)
 @dataclass
 class VitPoseEstimatorOutput(ModelOutput):
     r"""
-    loss (`torch.Tensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
+    loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
         Loss is not supported at this moment. See https://github.com/ViTAE-Transformer/ViTPose/tree/main/mmpose/models/losses for further detail.
-    heatmaps (`torch.Tensor` of shape `(batch_size, num_keypoints, height, width)`):
+    heatmaps (`torch.FloatTensor` of shape `(batch_size, num_keypoints, height, width)`):
         Heatmaps as predicted by the model.
-    hidden_states (`tuple(torch.Tensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):
-        Tuple of `torch.Tensor` (one for the output of the embeddings, if the model has an embedding layer, +
+    hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):
+        Tuple of `torch.FloatTensor` (one for the output of the embeddings, if the model has an embedding layer, +
         one for the output of each stage) of shape `(batch_size, sequence_length, hidden_size)`. Hidden-states
         (also called feature maps) of the model at the output of each stage.
     """
 
-    loss: torch.Tensor | None = None
-    heatmaps: torch.Tensor | None = None
-    hidden_states: tuple[torch.Tensor, ...] | None = None
-    attentions: tuple[torch.Tensor, ...] | None = None
+    loss: torch.FloatTensor | None = None
+    heatmaps: torch.FloatTensor | None = None
+    hidden_states: tuple[torch.FloatTensor, ...] | None = None
+    attentions: tuple[torch.FloatTensor, ...] | None = None
 
 
 @auto_docstring
@@ -65,6 +65,7 @@ class VitPosePreTrainedModel(PreTrainedModel):
     input_modalities = ("image",)
     supports_gradient_checkpointing = True
 
+    @torch.no_grad()
     def _init_weights(self, module: nn.Linear | nn.Conv2d | nn.LayerNorm):
         """Initialize the weights"""
         super()._init_weights(module)
@@ -229,7 +230,7 @@ class VitPoseForPoseEstimation(VitPosePreTrainedModel):
         >>> from transformers import AutoImageProcessor, VitPoseForPoseEstimation
         >>> import torch
         >>> from PIL import Image
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
 
         >>> processor = AutoImageProcessor.from_pretrained("usyd-community/vitpose-base-simple")

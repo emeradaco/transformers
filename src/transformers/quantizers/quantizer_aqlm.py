@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 from ..integrations import replace_with_aqlm_linear
 from ..utils import is_accelerate_available, is_aqlm_available, logging
+from ..utils.quantization_config import QuantizationConfigMixin
 
 
 logger = logging.get_logger(__name__)
@@ -37,6 +38,9 @@ class AqlmHfQuantizer(HfQuantizer):
 
     requires_calibration = True
     quantization_config: "AqlmConfig"
+
+    def __init__(self, quantization_config: QuantizationConfigMixin, **kwargs):
+        super().__init__(quantization_config, **kwargs)
 
     def validate_environment(self, *args, **kwargs):
         if not is_accelerate_available():

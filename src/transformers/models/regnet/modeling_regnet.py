@@ -262,6 +262,7 @@ class RegNetPreTrainedModel(PreTrainedModel):
     main_input_name = "pixel_values"
     _no_split_modules = ["RegNetYLayer"]
 
+    @torch.no_grad()
     def _init_weights(self, module):
         if isinstance(module, nn.Conv2d):
             init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
@@ -279,7 +280,7 @@ class RegNetPreTrainedModel(PreTrainedModel):
 @auto_docstring
 # Copied from transformers.models.resnet.modeling_resnet.ResNetModel with RESNET->REGNET,ResNet->RegNet
 class RegNetModel(RegNetPreTrainedModel):
-    def __init__(self, config: RegNetConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.config = config
         self.embedder = RegNetEmbeddings(config)
@@ -329,7 +330,7 @@ class RegNetModel(RegNetPreTrainedModel):
 )
 # Copied from transformers.models.resnet.modeling_resnet.ResNetForImageClassification with RESNET->REGNET,ResNet->RegNet,resnet->regnet
 class RegNetForImageClassification(RegNetPreTrainedModel):
-    def __init__(self, config: RegNetConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.regnet = RegNetModel(config)
@@ -344,7 +345,7 @@ class RegNetForImageClassification(RegNetPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        pixel_values: torch.Tensor | None = None,
+        pixel_values: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         output_hidden_states: bool | None = None,
         return_dict: bool | None = None,

@@ -22,10 +22,10 @@ from torch import Tensor, broadcast_tensors
 
 from ... import initialization as init
 from ...cache_utils import Cache
-from ...configuration_utils import PreTrainedConfig, SubConfigSpec
+from ...configuration_utils import PreTrainedConfig
 from ...modeling_outputs import BaseModelOutputWithPooling
 from ...modeling_utils import PreTrainedModel
-from ...processing_utils import ProcessingKwargs, Unpack
+from ...processing_utils import Unpack
 from ...utils import (
     TransformersKwargs,
     auto_docstring,
@@ -34,7 +34,6 @@ from ...utils import (
     logging,
     torch_compilable_check,
 )
-from ...utils.deprecation import deprecate_attr, deprecate_kwarg
 from ...utils.import_utils import requires
 from ..audioflamingo3.configuration_audioflamingo3 import AudioFlamingo3Config
 from ..audioflamingo3.modeling_audioflamingo3 import (
@@ -44,7 +43,7 @@ from ..audioflamingo3.modeling_audioflamingo3 import (
     AudioFlamingo3PreTrainedModel,
 )
 from ..audioflamingo3.processing_audioflamingo3 import AudioFlamingo3Processor
-from ..auto.configuration_auto import AutoConfig
+from ..auto import CONFIG_MAPPING
 from ..moonshine.modeling_moonshine import MoonshineRotaryEmbedding
 
 
@@ -87,25 +86,35 @@ class MusicFlamingoConfig(AudioFlamingo3Config):
     >>> configuration = model.config
     ```"""
 
-    default_theta = 1200.0
-    sub_configs_defaults = {
-        "audio_config": SubConfigSpec(config_class=AutoConfig, model_type="audioflamingo3_encoder"),
-        "text_config": SubConfigSpec(config_class=AutoConfig, model_type="qwen2"),
-    }
-
     audio_bos_token_id: int = 151670
     audio_eos_token_id: int = 151671
     audio_frame_step: float = 0.01
     rope_parameters: dict | None = None
 
     def __post_init__(self, **kwargs):
-        kwargs.setdefault("partial_rotary_factor", 0.2)
-        if isinstance(self.audio_config, dict) and self.audio_config["model_type"] in [None, "musicflamingo_encoder"]:
-            self.audio_config["model_type"] = "audioflamingo3_encoder"
-        PreTrainedConfig.__post_init__(self, **kwargs)
+        if self.rope_parameters is None:
+            self.rope_parameters = {
+                "rope_type": "default",
+                "rope_theta": 1200.0,
+                "partial_rotary_factor": 0.2,
+            }
+        if isinstance(self.audio_config, dict):
+            if self.audio_config["model_type"] in [None, "musicflamingo_encoder"]:
+                self.audio_config["model_type"] = "audioflamingo3_encoder"
+
+            self.audio_config = CONFIG_MAPPING[self.audio_config["model_type"]](**self.audio_config)
+        elif self.audio_config is None:
+            self.audio_config = CONFIG_MAPPING["audioflamingo3_encoder"]()
+
+        if isinstance(self.text_config, dict):
+            self.text_config["model_type"] = self.text_config.get("model_type", "qwen2")
+            self.text_config = CONFIG_MAPPING[self.text_config["model_type"]](**self.text_config)
+        elif self.text_config is None:
+            self.text_config = CONFIG_MAPPING["qwen2"]()
 
         self.max_position_embeddings = self.rope_parameters["rope_theta"]
         self.head_dim = self.audio_config.hidden_size
+        PreTrainedConfig.__post_init__(self, **kwargs)
 
 
 @requires(backends=("torch",))
@@ -181,8 +190,7 @@ def rotate_half(x):
 
 def apply_rotary_time_emb(hidden_states, cos, sin):
     original_dtype = hidden_states.dtype
-    dtype = torch.float32 if hidden_states.device.type == "mps" else torch.float64
-    hidden_states = hidden_states.to(dtype)
+    hidden_states = hidden_states.to(torch.float64)
     cos = cos.to(hidden_states)
     sin = sin.to(hidden_states)
     rot_dim = cos.shape[-1]
@@ -202,7 +210,7 @@ class MusicFlamingoRotaryEmbedding(MoonshineRotaryEmbedding):
     timestamps in seconds.
     """
 
-    def __init__(self, config: MusicFlamingoConfig):
+    def __init__(self, config: MusicFlamingoConfig, device=None):
         super().__init__(config)
         position_angles = self._compute_position_angles(self.inv_freq)
         self.position_angles = nn.Buffer(position_angles, persistent=False)
@@ -238,6 +246,7 @@ class MusicFlamingoRotaryEmbedding(MoonshineRotaryEmbedding):
 class MusicFlamingoPreTrainedModel(AudioFlamingo3PreTrainedModel):
     _no_split_modules = None
 
+    @torch.no_grad()
     def _init_weights(self, module):
         PreTrainedModel._init_weights(self, module)
         if isinstance(module, MusicFlamingoRotaryEmbedding):
@@ -260,7 +269,7 @@ class MusicFlamingoModel(AudioFlamingo3Model):
         input_ids: torch.LongTensor,
         post_lengths: torch.LongTensor,
         max_post_length: int,
-    ) -> torch.Tensor:
+    ) -> torch.FloatTensor:
         audio_token_mask = input_ids == self.config.audio_token_id
         diff = torch.diff(torch.nn.functional.pad(audio_token_mask.int(), (1, 1), value=0), dim=1)
         _, starts = torch.where(diff == 1)
@@ -302,7 +311,7 @@ class MusicFlamingoModel(AudioFlamingo3Model):
     )
     def get_audio_features(
         self,
-        input_features: torch.Tensor,
+        input_features: torch.FloatTensor,
         input_features_mask: torch.Tensor,
         input_ids: torch.LongTensor,
         **kwargs: Unpack[TransformersKwargs],
@@ -334,16 +343,15 @@ class MusicFlamingoModel(AudioFlamingo3Model):
 
     @can_return_tuple
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        input_features: torch.Tensor | None = None,
+        input_features: torch.FloatTensor | None = None,
         input_features_mask: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         use_cache: bool | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ):
@@ -372,14 +380,14 @@ class MusicFlamingoModel(AudioFlamingo3Model):
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             use_cache=use_cache,
             **kwargs,
         )
 
         return MusicFlamingoModelOutputWithPast(
             last_hidden_state=outputs.last_hidden_state,
-            cache=outputs.cache,
+            past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
             audio_hidden_states=audio_embeds,
@@ -400,8 +408,6 @@ class MusicFlamingoForConditionalGeneration(AudioFlamingo3ForConditionalGenerati
     def get_audio_features(self, input_features, input_features_mask, input_ids, **kwargs):
         return self.model.get_audio_features(input_features, input_features_mask, input_ids, **kwargs)
 
-
-__getattr__ = deprecate_attr(__name__, rename={"MusicFlamingoProcessorKwargs": (ProcessingKwargs, "5.29.0")})
 
 __all__ = [
     "MusicFlamingoConfig",

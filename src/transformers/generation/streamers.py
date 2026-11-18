@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import time
 from queue import Queue
 from typing import TYPE_CHECKING, Any, cast
@@ -281,6 +282,9 @@ class AsyncTextIteratorStreamer(TextStreamer):
         self.stop_signal = None
         self.timeout = timeout
         self.loop = asyncio.get_running_loop()
+        timeout_context = getattr(asyncio, "timeout", None)
+        self.has_asyncio_timeout = sys.version_info >= (3, 11) and callable(timeout_context)
+        self.asyncio_timeout = timeout_context if self.has_asyncio_timeout else None
 
     def on_finalized_text(self, text: str, stream_end: bool = False):
         """Put the new text in the queue. If the stream is ending, also put a stop signal in the queue."""
@@ -292,12 +296,19 @@ class AsyncTextIteratorStreamer(TextStreamer):
         return self
 
     async def __anext__(self):
-        async with asyncio.timeout(self.timeout):
-            value = await self.text_queue.get()
-        if value == self.stop_signal:
-            raise StopAsyncIteration()
+        try:
+            if self.has_asyncio_timeout and self.asyncio_timeout is not None:
+                async with self.asyncio_timeout(self.timeout):
+                    value = await self.text_queue.get()
+            else:
+                value = await asyncio.wait_for(self.text_queue.get(), timeout=self.timeout)
+        except asyncio.TimeoutError:
+            raise TimeoutError()
         else:
-            return value
+            if value == self.stop_signal:
+                raise StopAsyncIteration()
+            else:
+                return value
 
 
 class TextDiffusionStreamer(TextStreamer):

@@ -21,7 +21,15 @@ from ...image_utils import ImageInput
 from ...processing_utils import ProcessingKwargs, ProcessorMixin, Unpack
 from ...tokenization_utils_base import PreTokenizedInput, TextInput
 from ...utils import auto_docstring, logging
-from ...utils.deprecation import deprecate_attr
+
+
+class DonutProcessorKwargs(ProcessingKwargs, total=False):
+    _defaults = {
+        "text_kwargs": {
+            "return_mm_token_type_ids": False,
+            "return_text_replacement_offsets": False,
+        },
+    }
 
 
 logger = logging.get_logger(__name__)
@@ -29,6 +37,8 @@ logger = logging.get_logger(__name__)
 
 @auto_docstring
 class DonutProcessor(ProcessorMixin):
+    valid_processor_kwargs = DonutProcessorKwargs
+
     def __init__(self, image_processor=None, tokenizer=None, **kwargs):
         super().__init__(image_processor, tokenizer)
 
@@ -37,7 +47,7 @@ class DonutProcessor(ProcessorMixin):
         self,
         images: ImageInput | None = None,
         text: TextInput | PreTokenizedInput | list[TextInput] | list[PreTokenizedInput] | None = None,
-        **kwargs: Unpack[ProcessingKwargs],
+        **kwargs: Unpack[DonutProcessorKwargs],
     ):
         if images is not None and text is not None:
             kwargs.setdefault("add_special_tokens", False)
@@ -109,7 +119,5 @@ class DonutProcessor(ProcessorMixin):
         else:
             return [] if is_inner_value else {"text_sequence": tokens}
 
-
-__getattr__ = deprecate_attr(__name__, rename={"DonutProcessorKwargs": (ProcessingKwargs, "5.29.0")})
 
 __all__ = ["DonutProcessor"]

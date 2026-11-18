@@ -39,17 +39,17 @@ from ...modeling_rope_utils import (
     ROPE_INIT_FUNCTIONS,
     dynamic_rope_update,
 )
-from ...modeling_utils import PreTrainedModel, slice_logits_to_keep
+from ...modeling_utils import PreTrainedModel
 from ...utils import (
     auto_docstring,
     logging,
 )
 from ...utils.deprecation import deprecate_kwarg
-from ...utils.generic import is_flash_attention_requested
+from ...utils.generic import maybe_autocast
 from .configuration_falcon import FalconConfig
 
 
-if is_flash_attn_available(kernels_fallback_ok=True):
+if is_flash_attn_available():
     from ...modeling_flash_attention_utils import _flash_attention_forward
 
 logger = logging.get_logger(__name__)
@@ -101,7 +101,8 @@ def apply_rotary_pos_emb(q, k, cos, sin, unsqueeze_dim=1):
 
 # Copied from transformers.models.llama.modeling_llama.LlamaRotaryEmbedding with Llama->Falcon
 class FalconRotaryEmbedding(nn.Module):
-    def __init__(self, config: FalconConfig):
+    @deprecate_kwarg("device", version="5.18")
+    def __init__(self, config: FalconConfig, device=None):
         super().__init__()
         self.max_seq_len_cached = config.max_position_embeddings
         self.original_max_seq_len = config.max_position_embeddings
@@ -112,13 +113,14 @@ class FalconRotaryEmbedding(nn.Module):
         rope_init_fn: Callable = self.compute_default_rope_parameters
         if self.rope_type != "default":
             rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
-        inv_freq, self.attention_scaling = rope_init_fn(self.config)
+        inv_freq, self.attention_scaling = rope_init_fn(self.config, device)
 
         self.inv_freq = nn.Buffer(inv_freq, persistent=False)
         self.original_inv_freq = nn.Buffer(inv_freq.clone(), persistent=False)
 
     @staticmethod
-    def compute_default_rope_parameters(config: FalconConfig, **kwargs) -> tuple[torch.Tensor, float]:
+    @deprecate_kwarg("device", version="5.18")
+    def compute_default_rope_parameters(config: FalconConfig, device=None, **kwargs) -> tuple[torch.Tensor, float]:
         """
         Computes the inverse frequencies according to the original RoPE implementation
         Args:
@@ -134,14 +136,23 @@ class FalconRotaryEmbedding(nn.Module):
         attention_factor = 1.0  # Unused in this type of RoPE
         # Compute the inverse frequencies
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float) / dim))
-        return inv_freq, attention_factor
+        return inv_freq.to(device), attention_factor
 
+    @torch.no_grad()
     @dynamic_rope_update  # power user: used with advanced RoPE types (e.g. dynamic rope)
     def forward(self, x, position_ids):
-        freqs = position_ids[..., None].float() * self.inv_freq.to(device=x.device, dtype=torch.float)
-        emb = torch.cat((freqs, freqs), dim=-1)
-        cos = emb.cos() * self.attention_scaling
-        sin = emb.sin() * self.attention_scaling
+        inv_freq_expanded = (
+            self.inv_freq[None, :, None].expand(position_ids.shape[0], -1, 1).to(dtype=torch.float, device=x.device)
+        )
+        position_ids_expanded = position_ids[:, None, :].float()
+
+        device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
+        # Disable any outside autocast context if any, to really force fp32
+        with maybe_autocast(device_type=device_type, enabled=False):
+            freqs = (inv_freq_expanded @ position_ids_expanded).transpose(1, 2)
+            emb = torch.cat((freqs, freqs), dim=-1)
+            cos = emb.cos() * self.attention_scaling
+            sin = emb.sin() * self.attention_scaling
 
         return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
 
@@ -471,7 +482,7 @@ class FalconFlashAttention2(FalconAttention):
         # therefore the input hidden states gets silently casted in float32. Hence, we need
         # cast them back in float16 just to be sure everything works as expected.
         input_dtype = query_layer.dtype
-        device_type = query_layer.device.type
+        device_type = query_layer.device.type if query_layer.device.type != "mps" else "cpu"
         if input_dtype == torch.float32:
             if torch.is_autocast_enabled(device_type):
                 target_dtype = torch.get_autocast_dtype(device_type)
@@ -541,10 +552,7 @@ class FalconDecoderLayer(GradientCheckpointingLayer):
         hidden_size = config.hidden_size
         self.num_heads = config.num_attention_heads
 
-        attn_implementation = (
-            "flash_attention_2" if is_flash_attention_requested(config) else config._attn_implementation
-        )
-        self.self_attention = FALCON_ATTENTION_CLASSES[attn_implementation](config, layer_idx)
+        self.self_attention = FALCON_ATTENTION_CLASSES[config._attn_implementation](config, layer_idx)
         self.mlp = FalconMLP(config)
         self.hidden_dropout = config.hidden_dropout
         self.config = config
@@ -633,6 +641,7 @@ class FalconPreTrainedModel(PreTrainedModel):
     _supports_sdpa = True
     _can_compile_fullgraph = True
 
+    @torch.no_grad()
     def _init_weights(self, module: nn.Module):
         """Initialize the weights."""
         super()._init_weights(module)
@@ -683,11 +692,10 @@ class FalconModel(FalconPreTrainedModel):
         self.word_embeddings = new_embeddings
 
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         inputs_embeds: torch.LongTensor | None = None,
@@ -699,10 +707,10 @@ class FalconModel(FalconPreTrainedModel):
     ) -> tuple[torch.Tensor, ...] | BaseModelOutputWithPastAndCrossAttentions:
         r"""
         input_ids (`torch.LongTensor` of shape `(batch_size, input_ids_length)`):
-            `input_ids_length` = `sequence_length` if `cache` is `None` else `cache.get_seq_length()`
+            `input_ids_length` = `sequence_length` if `past_key_values` is `None` else `past_key_values.get_seq_length()`
             (`sequence_length` of input past key value states). Indices of input sequence tokens in the vocabulary.
 
-            If `cache` is used, only `input_ids` that do not have their past calculated should be passed as
+            If `past_key_values` is used, only `input_ids` that do not have their past calculated should be passed as
             `input_ids`.
 
             Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and
@@ -730,23 +738,25 @@ class FalconModel(FalconPreTrainedModel):
         if inputs_embeds is None:
             inputs_embeds = self.word_embeddings(input_ids)
 
-        if use_cache and cache is None:
-            cache = DynamicCache(config=self.config)
+        if use_cache and past_key_values is None:
+            past_key_values = DynamicCache(config=self.config)
 
         # Compute alibi tensor: check build_alibi_tensor documentation
         alibi = None
-        cache_length = cache.get_seq_length() if cache is not None else 0
+        past_key_values_length = past_key_values.get_seq_length() if past_key_values is not None else 0
         batch_size, seq_length, _ = inputs_embeds.shape
         if self.use_alibi:
             mask = (
-                torch.ones((batch_size, seq_length + cache_length), device=inputs_embeds.device, dtype=torch.long)
+                torch.ones(
+                    (batch_size, seq_length + past_key_values_length), device=inputs_embeds.device, dtype=torch.long
+                )
                 if attention_mask is None
                 else attention_mask
             )
             alibi = build_alibi_tensor(mask, self.num_heads, dtype=inputs_embeds.dtype)
 
         if position_ids is None:
-            past_seen_tokens = cache.get_seq_length() if cache is not None else 0
+            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             position_ids = torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device) + past_seen_tokens
             position_ids = position_ids.unsqueeze(0)
 
@@ -754,7 +764,7 @@ class FalconModel(FalconPreTrainedModel):
             config=self.config,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
-            cache=cache,
+            past_key_values=past_key_values,
             # Always materialize the mask so alibi can be added onto it below.
             allow_is_causal_skip=False,
         )
@@ -787,7 +797,7 @@ class FalconModel(FalconPreTrainedModel):
 
             outputs = block(
                 hidden_states,
-                layer_past=cache,
+                layer_past=past_key_values,
                 attention_mask=causal_mask,
                 position_ids=position_ids,
                 use_cache=use_cache,
@@ -807,11 +817,13 @@ class FalconModel(FalconPreTrainedModel):
             all_hidden_states = all_hidden_states + (hidden_states,)
 
         if not return_dict:
-            return tuple(v for v in [hidden_states, cache, all_hidden_states, all_self_attentions] if v is not None)
+            return tuple(
+                v for v in [hidden_states, past_key_values, all_hidden_states, all_self_attentions] if v is not None
+            )
 
         return BaseModelOutputWithPastAndCrossAttentions(
             last_hidden_state=hidden_states,
-            cache=cache,
+            past_key_values=past_key_values,
             hidden_states=all_hidden_states,
             attentions=all_self_attentions,
         )
@@ -837,11 +849,10 @@ class FalconForCausalLM(FalconPreTrainedModel, GenerationMixin):
         self.lm_head = new_embeddings
 
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         inputs_embeds: torch.Tensor | None = None,
@@ -855,10 +866,10 @@ class FalconForCausalLM(FalconPreTrainedModel, GenerationMixin):
     ) -> tuple[torch.Tensor] | CausalLMOutputWithCrossAttentions:
         r"""
         input_ids (`torch.LongTensor` of shape `(batch_size, input_ids_length)`):
-            `input_ids_length` = `sequence_length` if `cache` is `None` else `cache.get_seq_length()`
+            `input_ids_length` = `sequence_length` if `past_key_values` is `None` else `past_key_values.get_seq_length()`
             (`sequence_length` of input past key value states). Indices of input sequence tokens in the vocabulary.
 
-            If `cache` is used, only `input_ids` that do not have their past calculated should be passed as
+            If `past_key_values` is used, only `input_ids` that do not have their past calculated should be passed as
             `input_ids`.
 
             Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and
@@ -875,7 +886,7 @@ class FalconForCausalLM(FalconPreTrainedModel, GenerationMixin):
 
         transformer_outputs = self.transformer(
             input_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             attention_mask=attention_mask,
             position_ids=position_ids,
             inputs_embeds=inputs_embeds,
@@ -886,8 +897,8 @@ class FalconForCausalLM(FalconPreTrainedModel, GenerationMixin):
         )
         hidden_states = transformer_outputs[0]
 
-        hidden_states = slice_logits_to_keep(hidden_states, logits_to_keep)
-        lm_logits = self.lm_head(hidden_states)
+        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+        lm_logits = self.lm_head(hidden_states[:, slice_indices, :])
 
         loss = None
         if labels is not None:
@@ -905,7 +916,7 @@ class FalconForCausalLM(FalconPreTrainedModel, GenerationMixin):
         return CausalLMOutputWithCrossAttentions(
             loss=loss,
             logits=lm_logits,
-            cache=transformer_outputs.cache,
+            past_key_values=transformer_outputs.past_key_values,
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
         )
@@ -936,11 +947,10 @@ class FalconForSequenceClassification(FalconPreTrainedModel):
         self.post_init()
 
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         attention_mask: torch.Tensor | None = None,
         inputs_embeds: torch.Tensor | None = None,
         labels: torch.Tensor | None = None,
@@ -952,23 +962,27 @@ class FalconForSequenceClassification(FalconPreTrainedModel):
     ) -> tuple[torch.Tensor] | SequenceClassifierOutputWithPast:
         r"""
         input_ids (`torch.LongTensor` of shape `(batch_size, input_ids_length)`):
-            `input_ids_length` = `sequence_length` if `cache` is `None` else `cache.get_seq_length()`
+            `input_ids_length` = `sequence_length` if `past_key_values` is `None` else `past_key_values.get_seq_length()`
             (`sequence_length` of input past key value states). Indices of input sequence tokens in the vocabulary.
 
-            If `cache` is used, only `input_ids` that do not have their past calculated should be passed as
+            If `past_key_values` is used, only `input_ids` that do not have their past calculated should be passed as
             `input_ids`.
 
             Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and
             [`PreTrainedTokenizer.__call__`] for details.
 
             [What are input IDs?](../glossary#input-ids)
+        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
+            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
+            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
         """
 
         return_dict = return_dict if return_dict is not None else self.config.return_dict
 
         transformer_outputs = self.transformer(
             input_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             attention_mask=attention_mask,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
@@ -1032,7 +1046,7 @@ class FalconForSequenceClassification(FalconPreTrainedModel):
         return SequenceClassifierOutputWithPast(
             loss=loss,
             logits=pooled_logits,
-            cache=transformer_outputs.cache,
+            past_key_values=transformer_outputs.past_key_values,
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
         )
@@ -1058,11 +1072,10 @@ class FalconForTokenClassification(FalconPreTrainedModel):
         self.post_init()
 
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         attention_mask: torch.Tensor | None = None,
         inputs_embeds: torch.Tensor | None = None,
         labels: torch.Tensor | None = None,
@@ -1074,10 +1087,10 @@ class FalconForTokenClassification(FalconPreTrainedModel):
     ) -> tuple[torch.Tensor] | TokenClassifierOutput:
         r"""
         input_ids (`torch.LongTensor` of shape `(batch_size, input_ids_length)`):
-            `input_ids_length` = `sequence_length` if `cache` is `None` else `cache.get_seq_length()`
+            `input_ids_length` = `sequence_length` if `past_key_values` is `None` else `past_key_values.get_seq_length()`
             (`sequence_length` of input past key value states). Indices of input sequence tokens in the vocabulary.
 
-            If `cache` is used, only `input_ids` that do not have their past calculated should be passed as
+            If `past_key_values` is used, only `input_ids` that do not have their past calculated should be passed as
             `input_ids`.
 
             Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and
@@ -1094,7 +1107,7 @@ class FalconForTokenClassification(FalconPreTrainedModel):
 
         transformer_outputs = self.transformer(
             input_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             attention_mask=attention_mask,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
@@ -1129,7 +1142,7 @@ class FalconForTokenClassification(FalconPreTrainedModel):
 
 @auto_docstring
 class FalconForQuestionAnswering(FalconPreTrainedModel):
-    def __init__(self, config: FalconConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.transformer = FalconModel(config)
         self.qa_outputs = nn.Linear(config.hidden_size, 2)
@@ -1141,8 +1154,8 @@ class FalconForQuestionAnswering(FalconPreTrainedModel):
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        attention_mask: torch.Tensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         start_positions: torch.LongTensor | None = None,
         end_positions: torch.LongTensor | None = None,
         output_attentions: bool | None = None,
@@ -1152,10 +1165,10 @@ class FalconForQuestionAnswering(FalconPreTrainedModel):
     ) -> tuple | QuestionAnsweringModelOutput:
         r"""
         input_ids (`torch.LongTensor` of shape `(batch_size, input_ids_length)`):
-            `input_ids_length` = `sequence_length` if `cache` is `None` else `cache.get_seq_length()`
+            `input_ids_length` = `sequence_length` if `past_key_values` is `None` else `past_key_values.get_seq_length()`
             (`sequence_length` of input past key value states). Indices of input sequence tokens in the vocabulary.
 
-            If `cache` is used, only `input_ids` that do not have their past calculated should be passed as
+            If `past_key_values` is used, only `input_ids` that do not have their past calculated should be passed as
             `input_ids`.
 
             Indices can be obtained using [`AutoTokenizer`]. See [`PreTrainedTokenizer.encode`] and

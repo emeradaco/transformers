@@ -21,18 +21,20 @@
 from ...processing_utils import ProcessingKwargs, ProcessorMixin, Unpack
 from ...tokenization_utils_base import AudioInput, PreTokenizedInput, TextInput
 from ...utils import auto_docstring
-from ...utils.deprecation import deprecate_attr
+
+
+class MoonshineStreamingProcessorKwargs(ProcessingKwargs, total=False):
+    _defaults = {
+        "audio_kwargs": {
+            "pad_to_multiple_of": 80,
+            "padding": True,
+        },
+        "common_kwargs": {"return_tensors": "pt"},
+    }
 
 
 @auto_docstring
 class MoonshineStreamingProcessor(ProcessorMixin):
-    text_kwargs = {"return_tensors": "pt"}
-    audio_kwargs = {
-        "pad_to_multiple_of": 80,
-        "padding": True,
-        "return_tensors": "pt",
-    }
-
     def __init__(self, feature_extractor, tokenizer):
         super().__init__(feature_extractor, tokenizer)
 
@@ -41,7 +43,7 @@ class MoonshineStreamingProcessor(ProcessorMixin):
         self,
         audio: AudioInput | None = None,
         text: str | list[str] | TextInput | PreTokenizedInput | None = None,
-        **kwargs: Unpack[ProcessingKwargs],
+        **kwargs: Unpack[MoonshineStreamingProcessorKwargs],
     ):
         r"""
         Returns:
@@ -51,6 +53,7 @@ class MoonshineStreamingProcessor(ProcessorMixin):
             raise ValueError("You need to specify either an `audio` or `text` input to process.")
 
         output_kwargs = self._merge_kwargs(
+            MoonshineStreamingProcessorKwargs,
             tokenizer_init_kwargs=self.tokenizer.init_kwargs,
             **kwargs,
         )
@@ -107,7 +110,5 @@ class MoonshineStreamingProcessor(ProcessorMixin):
         feature_extractor_input_names = self.feature_extractor.model_input_names
         return feature_extractor_input_names + ["labels"]
 
-
-__getattr__ = deprecate_attr(__name__, rename={"MoonshineStreamingProcessorKwargs": (ProcessingKwargs, "5.29.0")})
 
 __all__ = ["MoonshineStreamingProcessor"]

@@ -24,7 +24,7 @@ from ...image_utils import (
     SizeDict,
 )
 from ...processing_utils import ImagesKwargs, Unpack
-from ...utils import TensorType, auto_docstring, logging
+from ...utils import TensorType, auto_docstring, logging, requires_backends
 
 
 if TYPE_CHECKING:
@@ -132,6 +132,7 @@ class GLPNImageProcessor(TorchvisionBackend):
         Convert raw model outputs to final depth predictions.
         Only supports PyTorch.
         """
+        requires_backends(self, "torch")
         predicted_depth = outputs.predicted_depth
         if target_sizes is not None and len(predicted_depth) != len(target_sizes):
             raise ValueError(

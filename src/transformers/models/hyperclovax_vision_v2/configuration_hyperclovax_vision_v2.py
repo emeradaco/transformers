@@ -19,9 +19,9 @@
 # limitations under the License.
 from huggingface_hub.dataclasses import strict
 
-from ...configuration_utils import PreTrainedConfig, SubConfigSpec
+from ...configuration_utils import PreTrainedConfig
 from ...utils import auto_docstring
-from ..auto import AutoConfig
+from ..auto import CONFIG_MAPPING, AutoConfig
 
 
 @auto_docstring(checkpoint="naver-hyperclovax/HyperCLOVAX-SEED-Think-32B")
@@ -43,11 +43,8 @@ class HyperCLOVAXVisionV2Config(PreTrainedConfig):
     """
 
     model_type = "hyperclovax_vision_v2"
-    sub_configs_defaults = {
-        "vision_config": SubConfigSpec(config_class=AutoConfig, model_type="qwen2_5_vl_vision"),
-        "text_config": SubConfigSpec(config_class=AutoConfig, model_type="hyperclovax"),
-    }
-    keys_to_ignore_at_inference = ["cache"]
+    sub_configs = {"text_config": AutoConfig, "vision_config": AutoConfig}
+    keys_to_ignore_at_inference = ["past_key_values"]
 
     text_config: dict | PreTrainedConfig | None = None
     vision_config: dict | PreTrainedConfig | None = None
@@ -56,9 +53,20 @@ class HyperCLOVAXVisionV2Config(PreTrainedConfig):
     tie_word_embeddings: bool = True
 
     def __post_init__(self, **kwargs):
-        # The Hub config uses the full Qwen2.5-VL type for the vision transformer.
-        if isinstance(self.vision_config, dict) and self.vision_config.get("model_type") == "qwen2_5_vl":
-            self.vision_config["model_type"] = "qwen2_5_vl_vision"
+        if isinstance(self.vision_config, dict):
+            model_type = self.vision_config.get("model_type", "qwen2_5_vl_vision")
+            # The Hub config uses the full Qwen2.5-VL type for the vision transformer.
+            model_type = "qwen2_5_vl_vision" if model_type == "qwen2_5_vl" else model_type
+            self.vision_config["model_type"] = model_type
+            self.vision_config = CONFIG_MAPPING[model_type](**self.vision_config)
+        elif self.vision_config is None:
+            self.vision_config = CONFIG_MAPPING["qwen2_5_vl_vision"]()
+
+        if isinstance(self.text_config, dict):
+            model_type = self.text_config.get("model_type", "hyperclovax")
+            self.text_config = CONFIG_MAPPING[model_type](**self.text_config)
+        elif self.text_config is None:
+            self.text_config = CONFIG_MAPPING["hyperclovax"]()
 
         # This is necessary to properly find the weight conversion mapping.
         if kwargs.get("model_type") == "vlm":

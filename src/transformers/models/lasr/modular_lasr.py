@@ -28,7 +28,6 @@ from ...processing_utils import ProcessingKwargs, ProcessorMixin, Unpack
 from ...tokenization_utils_base import PreTokenizedInput, TextInput
 from ...tokenization_utils_tokenizers import TokenizersBackend
 from ...utils import TransformersKwargs, auto_docstring, logging
-from ...utils.deprecation import deprecate_attr
 from ...utils.generic import merge_with_config_defaults
 from ...utils.output_capturing import capture_outputs
 from ..llama.modeling_llama import LlamaAttention, LlamaRotaryEmbedding, apply_rotary_pos_emb, eager_attention_forward
@@ -149,20 +148,25 @@ class LasrTokenizer(T5Tokenizer, TokenizersBackend):
         )
 
 
+class LasrProcessorKwargs(ProcessingKwargs, total=False):
+    _defaults = {
+        "audio_kwargs": {
+            "sampling_rate": 16000,
+            "padding": "longest",
+            "return_attention_mask": True,
+        },
+        "text_kwargs": {
+            "padding": True,
+            "padding_side": "right",
+            "add_special_tokens": False,
+        },
+        "common_kwargs": {"return_tensors": "pt"},
+    }
+
+
 @auto_docstring
 class LasrProcessor(ProcessorMixin):
-    text_kwargs = {
-        "padding": True,
-        "padding_side": "right",
-        "add_special_tokens": False,
-        "return_tensors": "pt",
-    }
-    audio_kwargs = {
-        "sampling_rate": 16000,
-        "padding": "longest",
-        "return_attention_mask": True,
-        "return_tensors": "pt",
-    }
+    valid_processor_kwargs = LasrProcessorKwargs
 
     def __init__(self, feature_extractor, tokenizer):
         super().__init__(feature_extractor, tokenizer)
@@ -173,7 +177,7 @@ class LasrProcessor(ProcessorMixin):
         audio: AudioInput,
         text: TextInput | PreTokenizedInput | list[TextInput] | list[PreTokenizedInput] | None = None,
         sampling_rate: int | None = None,
-        **kwargs: Unpack[ProcessingKwargs],
+        **kwargs: Unpack[LasrProcessorKwargs],
     ):
         r"""
         sampling_rate (`int`, *optional*):
@@ -183,6 +187,7 @@ class LasrProcessor(ProcessorMixin):
             issued and the default sampling rate will be assumed.
         """
         output_kwargs = self._merge_kwargs(
+            LasrProcessorKwargs,
             tokenizer_init_kwargs=self.tokenizer.init_kwargs,
             **kwargs,
         )
@@ -537,7 +542,7 @@ class LasrEncoder(LasrPreTrainedModel):
         for encoder_layer in self.layers:
             # add LayerDrop (see https://huggingface.co/papers/1909.11556 for description)
             to_drop = False
-            if self.training and self.layerdrop > 0.0:
+            if self.training:
                 dropout_probability = torch.rand([])
                 if dropout_probability < self.layerdrop:  # skip the layer
                     to_drop = True
@@ -583,8 +588,6 @@ class LasrForCTC(ParakeetForCTC):
         """
         return super().generate(**super_kwargs)
 
-
-__getattr__ = deprecate_attr(__name__, rename={"LasrProcessorKwargs": (ProcessingKwargs, "5.29.0")})
 
 __all__ = [
     "LasrForCTC",

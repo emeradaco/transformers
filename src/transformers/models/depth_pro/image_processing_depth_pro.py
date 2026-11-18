@@ -32,6 +32,7 @@ from ...utils import (
     TensorType,
     auto_docstring,
     logging,
+    requires_backends,
 )
 
 
@@ -87,6 +88,7 @@ class DepthProImageProcessor(TorchvisionBackend):
         target_sizes: TensorType | list[tuple[int, int]] | None = None,
     ) -> list[dict[str, TensorType]]:
         """Post-processes the raw depth predictions from the model."""
+        requires_backends(self, "torch")
         predicted_depth = outputs.predicted_depth
         fov = outputs.field_of_view
         batch_size = len(predicted_depth)

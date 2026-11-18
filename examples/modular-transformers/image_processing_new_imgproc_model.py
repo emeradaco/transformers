@@ -23,5 +23,5 @@ class ImgprocModelImageProcessor(TorchvisionBackend):
     do_normalize = True
     do_convert_rgb = True
 
-    def new_image_processing_method(self, pixel_values: torch.Tensor):
+    def new_image_processing_method(self, pixel_values: torch.FloatTensor):
         return pixel_values / 2

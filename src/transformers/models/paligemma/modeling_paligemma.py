@@ -25,7 +25,7 @@ from ...generation import GenerationMixin
 from ...masking_utils import create_causal_mask, create_masks_for_generate, create_sliding_window_causal_mask
 from ...modeling_flash_attention_utils import FlashAttentionKwargs
 from ...modeling_outputs import BaseModelOutputWithPast, BaseModelOutputWithPooling
-from ...modeling_utils import PreTrainedModel, slice_logits_to_keep
+from ...modeling_utils import PreTrainedModel
 from ...processing_utils import Unpack
 from ...utils import (
     ModelOutput,
@@ -35,7 +35,6 @@ from ...utils import (
     logging,
     torch_compilable_check,
 )
-from ...utils.deprecation import deprecate_kwarg
 from ..auto import AutoModel
 from .configuration_paligemma import PaliGemmaConfig
 
@@ -51,12 +50,12 @@ logger = logging.get_logger(__name__)
 @dataclass
 class PaligemmaModelOutputWithPast(BaseModelOutputWithPast):
     r"""
-    image_hidden_states (`torch.Tensor`, *optional*):
-        A `torch.Tensor` of size `(batch_size, num_images, sequence_length, hidden_size)`.
+    image_hidden_states (`torch.FloatTensor`, *optional*):
+        A `torch.FloatTensor` of size `(batch_size, num_images, sequence_length, hidden_size)`.
         image_hidden_states of the model produced by the vision encoder and after projecting the last hidden state.
     """
 
-    image_hidden_states: torch.Tensor | None = None
+    image_hidden_states: torch.FloatTensor | None = None
 
 
 @auto_docstring(
@@ -67,26 +66,26 @@ class PaligemmaModelOutputWithPast(BaseModelOutputWithPast):
 @dataclass
 class PaliGemmaCausalLMOutputWithPast(ModelOutput):
     r"""
-    loss (`torch.Tensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
+    loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
         Language modeling loss (for next-token prediction).
-    logits (`torch.Tensor` of shape `(batch_size, sequence_length, config.text_config.vocab_size)`):
+    logits (`torch.FloatTensor` of shape `(batch_size, sequence_length, config.text_config.vocab_size)`):
         Prediction scores of the language modeling head (scores for each vocabulary token before SoftMax).
-    cache (`Cache`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
+    past_key_values (`Cache`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
         It is a [`~cache_utils.Cache`] instance. For more details, see our [kv cache guide](https://huggingface.co/docs/transformers/en/kv_cache).
 
         Contains pre-computed hidden-states (key and values in the self-attention blocks) that can be used (see
-        `cache` input) to speed up sequential decoding.
-    image_hidden_states (`torch.Tensor`, *optional*):
-        A `torch.Tensor` of size `(batch_size, num_images, sequence_length, hidden_size)`.
+        `past_key_values` input) to speed up sequential decoding.
+    image_hidden_states (`torch.FloatTensor`, *optional*):
+        A `torch.FloatTensor` of size `(batch_size, num_images, sequence_length, hidden_size)`.
         image_hidden_states of the model produced by the vision encoder after projecting last hidden state.
     """
 
-    loss: torch.Tensor | None = None
-    logits: torch.Tensor | None = None
-    cache: Cache | None = None
-    hidden_states: tuple[torch.Tensor] | None = None
-    attentions: tuple[torch.Tensor] | None = None
-    image_hidden_states: torch.Tensor | None = None
+    loss: torch.FloatTensor | None = None
+    logits: torch.FloatTensor | None = None
+    past_key_values: Cache | None = None
+    hidden_states: tuple[torch.FloatTensor] | None = None
+    attentions: tuple[torch.FloatTensor] | None = None
+    image_hidden_states: torch.FloatTensor | None = None
 
 
 class PaliGemmaMultiModalProjector(nn.Module):
@@ -107,7 +106,7 @@ class PaliGemmaPreTrainedModel(PreTrainedModel):
     input_modalities = ("image", "text")
     supports_gradient_checkpointing = True
     _no_split_modules = ["PaliGemmaMultiModalProjector"]
-    _skip_keys_device_placement = ["cache"]
+    _skip_keys_device_placement = ["past_key_values"]
     _can_compile_fullgraph = False
     _supports_flash_attn = True
     _supports_sdpa = True
@@ -124,15 +123,16 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
     # we are filtering the logits/labels so we shouldn't divide the loss based on num_items_in_batch
     accepts_loss_kwargs = False
 
-    _supports_flash_attn = False  # Flash Attention drops the bidirectional mask over the image and prompt prefix
-
     def __init__(self, config: PaliGemmaConfig):
         super().__init__(config)
-        self.vision_tower = AutoModel.from_config(config.vision_config)
+        self.vision_tower = AutoModel.from_config(config=config.vision_config)
         self.multi_modal_projector = PaliGemmaMultiModalProjector(config)
         self.vocab_size = config.text_config.vocab_size
-        self.language_model = AutoModel.from_config(config.text_config)
-        self.text_config_dtype = self.config.text_config.dtype or self.dtype
+
+        language_model = AutoModel.from_config(config=config.text_config)
+        self.language_model = language_model
+
+        self.text_config_dtype = self.config.get_text_config().dtype or self.dtype
         self.post_init()
 
     @can_return_tuple
@@ -140,7 +140,7 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
         custom_intro="Obtains image last hidden states from the vision tower and apply multimodal projection."
     )
     def get_image_features(
-        self, pixel_values: torch.Tensor, **kwargs: Unpack[TransformersKwargs]
+        self, pixel_values: torch.FloatTensor, **kwargs: Unpack[TransformersKwargs]
     ) -> tuple | BaseModelOutputWithPooling:
         image_outputs = self.vision_tower(pixel_values, **kwargs)
         selected_image_feature = image_outputs.last_hidden_state
@@ -150,7 +150,7 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
         return image_outputs
 
     def get_placeholder_mask(
-        self, input_ids: torch.LongTensor, inputs_embeds: torch.Tensor, image_features: torch.Tensor
+        self, input_ids: torch.LongTensor, inputs_embeds: torch.FloatTensor, image_features: torch.FloatTensor
     ):
         """
         Obtains multimodal placeholder mask from `input_ids` or `inputs_embeds`, and checks that the placeholder token count is
@@ -175,26 +175,30 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
 
     @can_return_tuple
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        pixel_values: torch.Tensor | None = None,
+        pixel_values: torch.FloatTensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         token_type_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
-        mm_encoder_outputs: dict[str, BaseModelOutputWithPooling] | None = None,
         **kwargs: Unpack[FlashAttentionKwargs],
     ) -> tuple | PaligemmaModelOutputWithPast:
         r"""
+        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
+            config.text_config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
+            (masked), the loss is only computed for the tokens with labels in `[0, ..., config.text_config.vocab_size]`.
+
         Example:
 
         ```python
         >>> from PIL import Image
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
         >>> from transformers import AutoProcessor, PaliGemmaForConditionalGeneration
 
@@ -217,9 +221,6 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
-        if pixel_values is not None and mm_encoder_outputs is not None:
-            raise ValueError("You cannot specify both pixel_values and mm_encoder_outputs at the same time")
-
         # Replace image id with PAD if the image token if OOV, to avoid index-errors
         if input_ids is not None and self.config.image_token_id >= self.vocab_size:
             special_image_mask = input_ids == self.config.image_token_id
@@ -232,17 +233,14 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
             inputs_embeds = self.get_input_embeddings()(llm_input_ids)
 
         if position_ids is None:
-            past_seen_tokens = cache.get_seq_length() if cache is not None else 0
+            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             position_ids = torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device) + past_seen_tokens
             position_ids = position_ids.unsqueeze(0) + 1  # Paligemma positions are 1-indexed
 
         # Merge text and images
-        mm_encoder_outputs = mm_encoder_outputs if mm_encoder_outputs is not None else {}
-        if mm_encoder_outputs.get("image") is None and pixel_values is not None:
-            mm_encoder_outputs["image"] = self.get_image_features(pixel_values)
-
-        if mm_encoder_outputs.get("image") is not None:
-            image_features = mm_encoder_outputs["image"].pooler_output.to(inputs_embeds.device, inputs_embeds.dtype)
+        if pixel_values is not None:
+            image_features = self.get_image_features(pixel_values).pooler_output
+            image_features = image_features.to(inputs_embeds.device, inputs_embeds.dtype)
             special_image_mask = self.get_placeholder_mask(
                 input_ids, inputs_embeds=inputs_embeds, image_features=image_features
             )
@@ -253,10 +251,10 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
             "config": self.config.get_text_config(),
             "inputs_embeds": inputs_embeds,
             "attention_mask": attention_mask,
-            "cache": cache,
+            "past_key_values": past_key_values,
             "position_ids": position_ids,
         }
-        is_first_iteration = cache is None or not cache.is_initialized or pixel_values is not None
+        is_first_iteration = past_key_values is None or not past_key_values.is_initialized or pixel_values is not None
         if token_type_ids is not None and is_first_iteration:
             # Can attend bidirectionally in prefix and only causally in suffix
             mask_kwargs["block_sequence_ids"] = torch.where(token_type_ids == 0, 0, -1)
@@ -273,7 +271,7 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
         outputs = self.language_model(
             attention_mask=causal_mask,
             position_ids=position_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             **kwargs,
@@ -281,10 +279,10 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
 
         return PaligemmaModelOutputWithPast(
             last_hidden_state=outputs.last_hidden_state,
-            cache=outputs.cache,
+            past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
-            image_hidden_states=image_features if mm_encoder_outputs.get("image") is not None else None,
+            image_hidden_states=image_features if pixel_values is not None else None,
         )
 
 
@@ -295,9 +293,6 @@ class PaliGemmaModel(PaliGemmaPreTrainedModel):
 )
 class PaliGemmaForConditionalGeneration(PaliGemmaPreTrainedModel, GenerationMixin):
     _tied_weights_keys = {"lm_head.weight": "model.language_model.embed_tokens.weight"}
-    _tp_plan = {"lm_head": "colwise_gather_output"}
-
-    _supports_flash_attn = False  # Flash Attention drops the bidirectional mask over the image and prompt prefix
 
     def __init__(self, config: PaliGemmaConfig):
         super().__init__(config)
@@ -306,25 +301,23 @@ class PaliGemmaForConditionalGeneration(PaliGemmaPreTrainedModel, GenerationMixi
         self.post_init()
 
     @auto_docstring
-    def get_image_features(self, pixel_values: torch.Tensor, **kwargs: Unpack[TransformersKwargs]):
+    def get_image_features(self, pixel_values: torch.FloatTensor, **kwargs: Unpack[TransformersKwargs]):
         return self.model.get_image_features(pixel_values, **kwargs)
 
     @can_return_tuple
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        pixel_values: torch.Tensor | None = None,
+        pixel_values: torch.FloatTensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         token_type_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
         logits_to_keep: int | torch.Tensor = 0,
-        mm_encoder_outputs: dict[str, BaseModelOutputWithPooling] | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple | PaliGemmaCausalLMOutputWithPast:
         r"""
@@ -337,7 +330,7 @@ class PaliGemmaForConditionalGeneration(PaliGemmaPreTrainedModel, GenerationMixi
 
         ```python
         >>> from PIL import Image
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
         >>> from transformers import AutoProcessor, PaliGemmaForConditionalGeneration
 
@@ -362,21 +355,17 @@ class PaliGemmaForConditionalGeneration(PaliGemmaPreTrainedModel, GenerationMixi
             token_type_ids=token_type_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
-            mm_encoder_outputs=mm_encoder_outputs,
+            labels=labels,
             **kwargs,
         )
 
         hidden_states = outputs[0]
-        hidden_states = slice_logits_to_keep(hidden_states, logits_to_keep)
-        logits = self.lm_head(hidden_states)
-        final_logit_softcapping = getattr(self.config.get_text_config(), "final_logit_softcapping", None)
-        if final_logit_softcapping is not None:
-            logits = logits / final_logit_softcapping
-            logits = torch.tanh(logits)
-            logits = logits * final_logit_softcapping
+        # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
+        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+        logits = self.lm_head(hidden_states[:, slice_indices, :])
 
         loss = None
         if labels is not None:
@@ -387,7 +376,7 @@ class PaliGemmaForConditionalGeneration(PaliGemmaPreTrainedModel, GenerationMixi
         return PaliGemmaCausalLMOutputWithPast(
             loss=loss,
             logits=logits,
-            cache=outputs.cache,
+            past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
             image_hidden_states=outputs.image_hidden_states,
@@ -422,12 +411,11 @@ class PaliGemmaForConditionalGeneration(PaliGemmaPreTrainedModel, GenerationMixi
         return model_inputs
 
     @staticmethod
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def create_masks_for_generate(
         config: PreTrainedConfig,
         inputs_embeds: torch.Tensor,
         attention_mask: torch.Tensor | None,
-        cache: Cache | None,
+        past_key_values: Cache | None,
         position_ids: torch.Tensor | None,
         token_type_ids: torch.Tensor | None = None,
         is_first_iteration: bool | None = False,
@@ -444,7 +432,7 @@ class PaliGemmaForConditionalGeneration(PaliGemmaPreTrainedModel, GenerationMixi
             inputs_embeds=inputs_embeds,
             block_sequence_ids=group_ids,
             attention_mask=attention_mask,
-            cache=cache,
+            past_key_values=past_key_values,
             position_ids=position_ids,
         )
 

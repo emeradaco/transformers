@@ -25,31 +25,22 @@ logger = logging.get_logger(__name__)
 
 
 class MiniCPMV4_6ProcessorKwargs(ProcessingKwargs, total=False):
-    """
-    use_image_id (`bool`, *optional*):
-        Whether to prepend an image-id tag (``<image_id>N</image_id>``) before
-        each image placeholder. If unset, defaults to the image processor's `use_image_id`.
-    """
-
-    use_image_id: bool | None
+    _defaults = {
+        "common_kwargs": {
+            "return_tensors": "pt",
+        },
+        "text_kwargs": {
+            "padding": True,
+            "padding_side": "left",
+            "return_mm_token_type_ids": False,
+            "return_text_replacement_offsets": False,
+        },
+    }
 
 
 @auto_docstring
 class MiniCPMV4_6Processor(ProcessorMixin):
     valid_processor_kwargs = MiniCPMV4_6ProcessorKwargs
-
-    text_kwargs = {
-        "padding": True,
-        "padding_side": "left",
-        "return_tensors": "pt",
-    }
-    videos_kwargs = {
-        "return_tensors": "pt",
-    }
-    images_kwargs = {
-        "return_tensors": "pt",
-    }
-    use_image_id = None
 
     def __init__(self, image_processor=None, video_processor=None, tokenizer=None, chat_template=None, **kwargs):
         super().__init__(image_processor, video_processor, tokenizer, chat_template=chat_template, **kwargs)
@@ -77,7 +68,7 @@ class MiniCPMV4_6Processor(ProcessorMixin):
         images: ImageInput | None = None,
         text: TextInput | PreTokenizedInput | list[TextInput] | list[PreTokenizedInput] | None = None,
         videos: VideoInput | None = None,
-        **kwargs: Unpack[MiniCPMV4_6ProcessorKwargs],
+        **kwargs: Unpack[ProcessingKwargs],
     ):
         # MiniCPM needs to override `__call__` due to `_prepend_local_ids`, i.e. we add local image id inside text
         # Current `replace_image_tokens` API assumes that each image-placeholder doesn't depend on the other!
@@ -85,18 +76,11 @@ class MiniCPMV4_6Processor(ProcessorMixin):
         self.validate_inputs(images=images, text=text, videos=videos, **kwargs)
 
         merged_kwargs = self._merge_kwargs(
+            self.valid_processor_kwargs,
             tokenizer_init_kwargs=self.tokenizer.init_kwargs if hasattr(self, "tokenizer") else {},
             **kwargs,
         )
-
-        if "use_image_id" in merged_kwargs["images_kwargs"]:
-            logger.warning_once(
-                "Passing `use_image_id` in `images_kwargs` is deprecated "
-                "and will be removed in v5.29.0. Pass it directly to the processor instead."
-            )
-
-        # "images_kwargs" has priority for backwards compatibility
-        use_image_id = merged_kwargs["images_kwargs"].pop("use_image_id", merged_kwargs["use_image_id"])
+        use_image_id = merged_kwargs["images_kwargs"].pop("use_image_id", None)
         use_image_id = use_image_id if use_image_id is not None else self.default_use_image_id
 
         processed_images = processed_videos = {}
@@ -109,12 +93,9 @@ class MiniCPMV4_6Processor(ProcessorMixin):
         text_inputs = {}
         return_tensors = merged_kwargs["text_kwargs"].get("return_tensors", None)
         if text is not None:
-            # text_kwargs has priority for backwards compatibility
-            return_mm_token_type_ids = merged_kwargs["text_kwargs"].pop(
-                "return_mm_token_type_ids", merged_kwargs["return_mm_token_type_ids"]
-            )
+            return_mm_token_type_ids = merged_kwargs["text_kwargs"].pop("return_mm_token_type_ids", False)
             return_text_replacement_offsets = merged_kwargs["text_kwargs"].pop(
-                "return_text_replacement_offsets", merged_kwargs["return_text_replacement_offsets"]
+                "return_text_replacement_offsets", False
             )
 
             if images_replacements and use_image_id:
@@ -180,17 +161,9 @@ class MiniCPMV4_6Processor(ProcessorMixin):
         )
 
         if self.slice_mode and num_rows > 0 and num_cols > 0:
-            # Slices do not necessarily share a token count: per-slice adaptive upsampling resizes
-            # each one independently, so read every count instead of reusing the first slice's.
-            slice_tokens = [int(n) for n in num_tokens_per_patch[1:]]
-            if len(slice_tokens) != num_rows * num_cols:
-                raise ValueError(f"Image {image_idx}: got {len(slice_tokens)} slices for a {num_rows}x{num_cols} grid")
-            slices = []
-            for row in range(num_rows):
-                row_tokens = slice_tokens[row * num_cols : (row + 1) * num_cols]
-                slices.append(
-                    "".join(self.slice_start_token + self.image_token * n + self.slice_end_token for n in row_tokens)
-                )
+            per_slice_tokens = int(num_tokens_per_patch[1]) if len(num_tokens_per_patch) > 1 else 0
+            slice_placeholder = self.slice_start_token + self.image_token * per_slice_tokens + self.slice_end_token
+            slices = [slice_placeholder * num_cols for _ in range(num_rows)]
             image_placeholder += "\n".join(slices)
 
         return image_placeholder

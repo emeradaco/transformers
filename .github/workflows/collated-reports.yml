@@ -17,13 +17,11 @@ on:
         required: true
         type: string
 
-
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   collated_reports:
-    permissions:
-      contents: read
     name: Collated reports
     runs-on: ubuntu-22.04
     if: always()

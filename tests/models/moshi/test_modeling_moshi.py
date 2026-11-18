@@ -42,7 +42,6 @@ from transformers.testing_utils import (
 
 from ...generation.test_utils import GenerationTesterMixin
 from ...test_configuration_common import ConfigTester
-from ...test_memory_cleanup_mixin import MemoryCleanupMixin
 from ...test_modeling_common import (
     TEST_EAGER_MATCHES_SDPA_INFERENCE_PARAMETERIZATION,
     ModelTesterMixin,
@@ -381,7 +380,7 @@ class MoshiTester:
         vocab_size=99,
         hidden_size=32,
         num_hidden_layers=2,
-        num_attention_heads=2,
+        num_attention_heads=8,
         intermediate_size=4,
         hidden_act="silu",
         rms_norm_eps=0.001,
@@ -394,10 +393,10 @@ class MoshiTester:
         num_codebooks=4,
         audio_encoder_type="mimi",
         attn_implementation="eager",
-        depth_hidden_size=32,
+        depth_hidden_size=16,
         depth_num_hidden_layers=2,
         depth_max_position_embeddings=5,
-        depth_num_attention_heads=2,
+        depth_num_attention_heads=8,
         depth_ffn_dim=16,
         depth_sliding_window=4,
         mimi_intermediate_size=40,
@@ -587,7 +586,7 @@ class MoshiTest(ModelTesterMixin, GenerationTesterMixin, unittest.TestCase):
         )
 
     @unittest.skip(reason="Continuing from past key values is not straightforward as we're dealing with 3 inputs")
-    def test_generate_continue_from_cache(self):
+    def test_generate_continue_from_past_key_values(self):
         pass
 
     @parameterized.expand(TEST_EAGER_MATCHES_SDPA_INFERENCE_PARAMETERIZATION)
@@ -820,31 +819,6 @@ class MoshiTest(ModelTesterMixin, GenerationTesterMixin, unittest.TestCase):
     def test_model_base_model_prefix(self):
         pass
 
-    def flash_attn_from_config(self, attn_implementation, test_fwd_in_train=True):
-        """Overriden for additional input that is needed"""
-        for model_class in self.all_generative_model_classes:
-            config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
-            config = self._prepare_config_headdim(config, 16)
-
-            model = model_class._from_config(
-                config,
-                attn_implementation=attn_implementation,
-                dtype=torch.bfloat16,
-            ).to(torch_device)
-
-            model.train(test_fwd_in_train)
-
-            # Moshi requires audio codes
-            model(**inputs_dict)
-
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                model.save_pretrained(tmp_dir)
-                reloaded = model_class.from_pretrained(tmp_dir)
-                self.assertNotEqual(
-                    reloaded.config._attn_implementation,
-                    attn_implementation,
-                )
-
 
 def place_dict_on_device(dict_to_place, device):
     for key in dict_to_place:
@@ -854,14 +828,14 @@ def place_dict_on_device(dict_to_place, device):
 
 
 @require_torch
-class MoshiIntegrationTests(MemoryCleanupMixin, unittest.TestCase):
+class MoshiIntegrationTests(unittest.TestCase):
     @cached_property
     def feature_extractor(self):
-        return AutoFeatureExtractor.from_pretrained("kmhf/hf-moshika")
+        return AutoFeatureExtractor.from_pretrained("kmhf/hf-moshiko")
 
     @cached_property
     def tokenizer(self):
-        return AutoTokenizer.from_pretrained("kmhf/hf-moshika")
+        return AutoTokenizer.from_pretrained("kmhf/hf-moshiko")
 
     def _load_datasample(self):
         ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
@@ -915,7 +889,6 @@ class MoshiIntegrationTests(MemoryCleanupMixin, unittest.TestCase):
         self.assertTrue(expected_text_token == model_outputs.sequences[0, -2].item())
         self.assertTrue(expected_audio_tokens == model_outputs.audio_codes[0, :, -1].tolist())
 
-    @unittest.skip(reason="`kmhf/hf-moshiko` is no longer on the Hub, see #50016")
     @slow
     def test_moshiko_greedy_unconditional_fp16_eager(self):
         model = MoshiForConditionalGeneration.from_pretrained(
@@ -930,7 +903,6 @@ class MoshiIntegrationTests(MemoryCleanupMixin, unittest.TestCase):
         # eager equivalence is not as strict as sdpa.
         self.assertTrue(some_expected_audio_tokens == model_outputs.audio_codes[0, :, :2].tolist())
 
-    @unittest.skip(reason="`kmhf/hf-moshiko` is no longer on the Hub, see #50016")
     @slow
     def test_moshiko_greedy_unconditional_fp32(self):
         model = MoshiForConditionalGeneration.from_pretrained(
@@ -952,7 +924,6 @@ class MoshiIntegrationTests(MemoryCleanupMixin, unittest.TestCase):
         self.assertTrue(expected_text_tokens == model_outputs.sequences[0, 1:].tolist())
         self.assertTrue(some_expected_audio_tokens == model_outputs.audio_codes[0, :, :2].tolist())
 
-    @unittest.skip(reason="`kmhf/hf-moshiko` is no longer on the Hub, see #50016")
     @slow
     @require_torch_fp16
     def test_moshiko_greedy_unconditional_fp16(self):

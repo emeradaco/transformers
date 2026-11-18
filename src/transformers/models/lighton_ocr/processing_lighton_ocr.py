@@ -24,7 +24,18 @@ import numpy as np
 
 from ...image_utils import ChannelDimension, ImageInput, get_image_size
 from ...processing_utils import MultiModalData, ProcessingKwargs, ProcessorMixin
-from ...utils.deprecation import deprecate_attr
+
+
+class LightOnOcrProcessorKwargs(ProcessingKwargs, total=False):
+    _defaults = {
+        "text_kwargs": {
+            "padding": False,
+            "return_mm_token_type_ids": False,
+        },
+        "common_kwargs": {
+            "return_tensors": "pt",
+        },
+    }
 
 
 def _num_image_tokens(image_size: tuple[int, int], patch_size: tuple[int, int]) -> int:
@@ -88,13 +99,7 @@ def get_resize_output_image_size(
 
 
 class LightOnOcrProcessor(ProcessorMixin):
-    text_kwargs = {
-        "return_tensors": "pt",
-    }
-    images_kwargs = {
-        "do_pad": True,
-        "return_tensors": "pt",
-    }
+    valid_processor_kwargs = LightOnOcrProcessorKwargs
 
     def __init__(
         self,
@@ -144,7 +149,8 @@ class LightOnOcrProcessor(ProcessorMixin):
         """
         vision_data = {}
         if image_sizes is not None:
-            images_kwargs = self._merge_kwargs(**kwargs)["images_kwargs"]
+            images_kwargs = LightOnOcrProcessorKwargs._defaults.get("images_kwargs", {})
+            images_kwargs.update(kwargs)
 
             size = images_kwargs.get("size", None) or self.image_processor.size
             patch_size = images_kwargs.get("patch_size", None) or self.image_processor.patch_size
@@ -167,7 +173,5 @@ class LightOnOcrProcessor(ProcessorMixin):
 
         return MultiModalData(**vision_data)
 
-
-__getattr__ = deprecate_attr(__name__, rename={"LightOnOcrProcessorKwargs": (ProcessingKwargs, "5.29.0")})
 
 __all__ = ["LightOnOcrProcessor"]

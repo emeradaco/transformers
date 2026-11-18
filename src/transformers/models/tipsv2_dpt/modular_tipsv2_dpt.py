@@ -21,8 +21,8 @@ from typing_extensions import Unpack
 
 from ... import initialization as init
 from ...activations import ACT2FN
-from ...backbone_utils import load_backbone
-from ...configuration_utils import PreTrainedConfig, SubConfigSpec
+from ...backbone_utils import consolidate_backbone_kwargs_to_config, load_backbone
+from ...configuration_utils import PreTrainedConfig
 from ...image_processing_outputs import SemanticSegmentationPostProcessorOutput
 from ...modeling_outputs import DepthEstimatorOutput, SemanticSegmenterOutput
 from ...modeling_utils import PreTrainedModel
@@ -43,9 +43,9 @@ from ..zoedepth.modeling_zoedepth import (
 @dataclass
 class Tipsv2DptDensePredictorOutput(ModelOutput):
     r"""
-    normals (`torch.Tensor` of shape `(batch_size, 3, height, width)`):
+    normals (`torch.FloatTensor` of shape `(batch_size, 3, height, width)`):
         Raw normal map predictions (unnormalized).
-    segmentation_logits (`torch.Tensor` of shape `(batch_size, config.num_labels, height, width)`):
+    segmentation_logits (`torch.FloatTensor` of shape `(batch_size, config.num_labels, height, width)`):
         Classification scores for each pixel.
         <Tip warning={true}>
         The logits returned do not necessarily have the same size as the `pixel_values` passed as inputs. This is
@@ -54,11 +54,11 @@ class Tipsv2DptDensePredictorOutput(ModelOutput):
         </Tip>
     """
 
-    predicted_depth: torch.Tensor | None = None
-    normals: torch.Tensor | None = None
-    segmentation_logits: torch.Tensor | None = None
-    hidden_states: tuple[torch.Tensor, ...] | None = None
-    attentions: tuple[torch.Tensor, ...] | None = None
+    predicted_depth: torch.FloatTensor | None = None
+    normals: torch.FloatTensor | None = None
+    segmentation_logits: torch.FloatTensor | None = None
+    hidden_states: tuple[torch.FloatTensor, ...] | None = None
+    attentions: tuple[torch.FloatTensor, ...] | None = None
 
 
 class Tipsv2DptNormalEstimatorOutput(Sapiens2NormalEstimatorOutput):
@@ -227,17 +227,7 @@ class Tipsv2DptConfig(PreTrainedConfig):
     """
 
     model_type = "tipsv2_dpt"
-    sub_configs_defaults = {
-        "backbone_config": SubConfigSpec(
-            config_class=AutoConfig,
-            model_type="tipsv2_vision_model",
-            init_kwargs={
-                "out_indices": [3, 6, 9, 12],
-                "apply_layernorm": True,
-                "reshape_hidden_states": False,
-            },
-        ),
-    }
+    sub_configs = {"backbone_config": AutoConfig}
 
     backbone_config: dict | PreTrainedConfig | None = None
     neck_hidden_sizes: list[int] | tuple[int, ...] | None = None
@@ -255,6 +245,17 @@ class Tipsv2DptConfig(PreTrainedConfig):
             self.neck_hidden_sizes = [96, 192, 384, 768]
         if self.reassemble_factors is None:
             self.reassemble_factors = [4, 2, 1, 0.5]
+
+        self.backbone_config, kwargs = consolidate_backbone_kwargs_to_config(
+            backbone_config=self.backbone_config,
+            default_config_type="tipsv2_vision_model",
+            default_config_kwargs={
+                "out_indices": [3, 6, 9, 12],
+                "apply_layernorm": True,
+                "reshape_hidden_states": False,
+            },
+            **kwargs,
+        )
         super().__post_init__(**kwargs)
 
 
@@ -436,7 +437,7 @@ class Tipsv2DptForDensePrediction(Tipsv2DptPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        pixel_values: torch.Tensor,
+        pixel_values: torch.FloatTensor,
         **kwargs: Unpack[TransformersKwargs],
     ) -> Tipsv2DptDensePredictorOutput:
         r"""
@@ -524,8 +525,8 @@ class Tipsv2DptForDepthEstimation(Tipsv2DptPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        pixel_values: torch.Tensor,
-        labels: torch.Tensor | None = None,
+        pixel_values: torch.FloatTensor,
+        labels: torch.FloatTensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> DepthEstimatorOutput:
         r"""
@@ -597,8 +598,8 @@ class Tipsv2DptForNormalEstimation(Tipsv2DptPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        pixel_values: torch.Tensor,
-        labels: torch.Tensor | None = None,
+        pixel_values: torch.FloatTensor,
+        labels: torch.FloatTensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> Tipsv2DptNormalEstimatorOutput:
         r"""
@@ -669,11 +670,15 @@ class Tipsv2DptForSemanticSegmentation(Tipsv2DptPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        pixel_values: torch.Tensor,
+        pixel_values: torch.FloatTensor,
         labels: torch.LongTensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> SemanticSegmenterOutput:
         r"""
+        labels (`torch.LongTensor` of shape `(batch_size, height, width)`, *optional*):
+            Ground truth semantic segmentation maps for computing the loss. Indices should be in `[0, ...,
+            config.num_labels - 1]`. If `config.num_labels > 1`, a classification loss is computed (Cross-Entropy).
+
         Example:
 
         ```python

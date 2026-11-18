@@ -1,5 +1,4 @@
-from ..core_model_loading import ConversionOps
-from ..quantizers.quantizers_utils import get_module_from_name, should_convert_module
+from ..quantizers.quantizers_utils import should_convert_module
 from ..utils import is_torch_available, logging
 
 
@@ -255,7 +254,7 @@ class AutoBitLinear(nn.Linear):
         use_rms_norm: bool = False,
         rms_norm_eps: float = 1e-6,
     ):
-        super().__init__(in_features, out_features, bias, device=device, dtype=dtype)
+        super().__init__(in_features, out_features, bias)
         self.online_quant = online_quant
         # Optional RMSNorm
         self.rms_norm = None
@@ -265,6 +264,18 @@ class AutoBitLinear(nn.Linear):
             self.rms_norm = LlamaRMSNorm(in_features, eps=rms_norm_eps)
         if not online_quant:
             self.weight_scale = nn.Buffer(torch.ones((1), dtype=dtype, device=device))
+            self._register_load_state_dict_pre_hook(self.load_hook)
+
+    def load_hook(
+        self,
+        state_dict,
+        prefix,
+        *args,
+        **kwargs,
+    ):
+        if (prefix + "weight") in state_dict and state_dict[prefix + "weight"].dtype != self.weight.dtype:
+            state_dict[prefix + "weight"] = unpack_weights(state_dict[prefix + "weight"], dtype=self.weight.dtype)
+        return state_dict
 
     def forward(self, input):
         # Optional RMSNorm on activations prior to quantization.
@@ -340,7 +351,7 @@ def replace_with_bitnet_linear(model, modules_to_not_convert: list[str] | None =
     return model
 
 
-class BitNetDeserialize(ConversionOps):
+class BitNetDeserialize:
     def __init__(self, hf_quantizer):
         self.hf_quantizer = hf_quantizer
 
@@ -351,10 +362,30 @@ class BitNetDeserialize(ConversionOps):
         full_layer_name: str | None = None,
         **kwargs,
     ) -> dict[str, torch.Tensor]:
-        weight = input_dict["weight"]
-        weight = weight[0] if isinstance(weight, list) else weight
-        module, _ = get_module_from_name(model, full_layer_name)
-        # packed checkpoints hold VALUES_PER_ITEM ternary rows per stored row
-        if isinstance(module, AutoBitLinear) and weight.shape[0] * VALUES_PER_ITEM == module.out_features:
-            weight = unpack_weights(weight.to(torch.uint8), dtype=module.weight.dtype)
-        return {"weight": weight}
+        for key, value in input_dict.items():
+            if isinstance(value, list):
+                input_dict[key] = value[0]
+        key_weight = "weight"
+        weight = input_dict.pop(key_weight)
+        from ..quantizers.quantizers_utils import get_module_from_name
+
+        needs_unpacking = False
+        target_dtype = weight.dtype
+        if model is not None and full_layer_name is not None:
+            module, _ = get_module_from_name(model, full_layer_name)
+            if hasattr(module, "out_features") and hasattr(module, "in_features"):
+                # Packed: shape[0] * VALUES_PER_ITEM == out_features
+                # Unpacked: shape[0] == out_features
+                expected_out = module.out_features
+                actual_out = weight.shape[0]
+                if actual_out * VALUES_PER_ITEM == expected_out:
+                    needs_unpacking = True
+                    # Unpack into the module's compute dtype, not the packed uint8 dtype,
+                    # otherwise the ternary weights stay uint8 and F.linear fails with a
+                    # dtype mismatch (e.g. BFloat16 != unsigned char).
+                    if hasattr(module, "weight_scale"):
+                        target_dtype = module.weight_scale.dtype
+        if needs_unpacking:
+            weight_uint8 = weight.to(torch.uint8)
+            weight = unpack_weights(weight_uint8, dtype=target_dtype)
+        return {key_weight: weight}

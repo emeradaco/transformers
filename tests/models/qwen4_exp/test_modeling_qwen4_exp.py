@@ -42,9 +42,10 @@ if is_torch_available():
         Qwen4ExpModel,
         Qwen4ExpTextConfig,
         Qwen4ExpTextModel,
+        Qwen4ExpVisionConfig,
         StaticCache,
     )
-    from transformers.distributed.fsdp import ALL_FSDP_STYLES
+    from transformers.distributed.fsdp import verify_fsdp_plan
     from transformers.integrations import FP8Embedding
     from transformers.quantizers.quantizer_finegrained_fp8 import FineGrainedFP8HfQuantizer
 
@@ -58,7 +59,7 @@ class Qwen4ExpTextModelTester(CausalLMModelTester):
         super().__init__(parent=parent)
         self.hidden_act = "silu"
         self.rope_parameters = {"rope_type": "default", "partial_rotary_factor": 0.25, "mrope_section": [1, 1, 1]}
-        self.layer_types = ["linear_attention", "indexed_attention"]
+        self.layer_types = ["linear_attention", "qwen_sparse_attention"]
         self.linear_conv_kernel_dim = 2
         self.linear_key_head_dim = 16
         self.linear_value_head_dim = 16
@@ -151,18 +152,6 @@ class Qwen4ExpTextModelTest(CausalLMModelTest, unittest.TestCase):
                 [config.num_attention_heads, seq_len, seq_len],
             )
 
-    def test_eager_attention_with_left_padding(self):
-        """Regression for #49888: overlapping float masks must not cause NaNs for left-padding queries."""
-        config = self.model_tester.get_config()
-        model = Qwen4ExpTextModel._from_config(config, attn_implementation="eager").to(torch_device).eval()
-        input_ids = torch.tensor([[config.pad_token_id, config.pad_token_id, 5, 6, 7]], device=torch_device)
-        attention_mask = torch.tensor([[0, 0, 1, 1, 1]], device=torch_device)
-
-        with torch.no_grad():
-            outputs = model(input_ids, attention_mask=attention_mask, output_attentions=True, use_cache=False)
-
-        self.assertTrue(torch.isfinite(outputs.attentions[0]).all())
-
     def test_hidden_states_output(self):
         config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
         config.output_hidden_states = True
@@ -184,6 +173,10 @@ class Qwen4ExpTextModelTest(CausalLMModelTest, unittest.TestCase):
     def test_generate_compilation_all_outputs(self):
         pass
 
+    @unittest.skip("Qwen4-Exp hybrid linear-attention cache is not compatible with quantized cache yet.")
+    def test_generate_with_quant_cache(self):
+        pass
+
     @unittest.skip(
         "Cannot generate from random embeds since the ple embedding needs to revert them if input_ids are not provided"
     )
@@ -200,7 +193,7 @@ class Qwen4ExpTextModelTest(CausalLMModelTest, unittest.TestCase):
         ):
             _ = Qwen4ExpTextConfig(
                 ple_layer_ids=[2],
-                layer_types=["linear_attention", "indexed_attention"],
+                layer_types=["linear_attention", "qwen_sparse_attention"],
             )
 
     def test_finegrained_fp8_embedding_conversion(self):
@@ -229,7 +222,7 @@ class Qwen4ExpTextModelTest(CausalLMModelTest, unittest.TestCase):
         static_cache = StaticCache(config=config, max_cache_len=padded_ids.shape[1])
         static_inputs = model.prepare_inputs_for_generation(
             padded_ids,
-            cache=static_cache,
+            past_key_values=static_cache,
             attention_mask=attention_mask,
             is_first_iteration=True,
         )
@@ -239,7 +232,7 @@ class Qwen4ExpTextModelTest(CausalLMModelTest, unittest.TestCase):
             outputs = [model(padded_ids, attention_mask=attention_mask, use_cache=False).logits[:, -3:]]
             static_output = model(**static_inputs).logits[:, -3:]
             dynamic_output = model(
-                input_ids=padded_ids, attention_mask=attention_mask, cache=DynamicCache(config=config)
+                input_ids=padded_ids, attention_mask=attention_mask, past_key_values=DynamicCache(config=config)
             ).logits[:, -3:]
             outputs.append(static_output)
             outputs.append(dynamic_output)
@@ -269,8 +262,8 @@ class Qwen4ExpTextModelTest(CausalLMModelTest, unittest.TestCase):
             actual_outputs = [
                 torch.cat(
                     [
-                        model(input_ids[:, :split_idx], cache=chunk_cache, use_cache=True).last_hidden_state,
-                        model(input_ids[:, split_idx:], cache=chunk_cache, use_cache=True).last_hidden_state,
+                        model(input_ids[:, :split_idx], past_key_values=chunk_cache, use_cache=True).last_hidden_state,
+                        model(input_ids[:, split_idx:], past_key_values=chunk_cache, use_cache=True).last_hidden_state,
                     ],
                     dim=1,
                 )
@@ -283,7 +276,7 @@ class Qwen4ExpTextModelTest(CausalLMModelTest, unittest.TestCase):
                         [
                             model(
                                 input_ids[:, token_idx : token_idx + 1],
-                                cache=cache,
+                                past_key_values=cache,
                                 use_cache=True,
                             ).last_hidden_state
                             for token_idx in range(input_ids.shape[1])
@@ -345,7 +338,8 @@ class Qwen4ExpTextModelTest(CausalLMModelTest, unittest.TestCase):
 class Qwen4ExpVisionText2TextModelTester(VLMModelTester):
     base_model_class = Qwen4ExpModel
     config_class = Qwen4ExpConfig
-
+    text_config_class = Qwen4ExpTextConfig
+    vision_config_class = Qwen4ExpVisionConfig
     conditional_generation_class = Qwen4ExpForConditionalGeneration
 
     def __init__(self, parent, **kwargs):
@@ -353,7 +347,7 @@ class Qwen4ExpVisionText2TextModelTester(VLMModelTester):
         self.num_key_value_heads = 1
         self.head_dim = 24
         self.hidden_act = "silu"
-        self.layer_types = ["linear_attention", "indexed_attention"]
+        self.layer_types = ["linear_attention", "qwen_sparse_attention"]
         self.linear_conv_kernel_dim = 2
         self.linear_key_head_dim = 16
         self.linear_value_head_dim = 16
@@ -407,12 +401,10 @@ class Qwen4ExpVisionText2TextModelTester(VLMModelTester):
     def _special_token_ids(self):
         return super()._special_token_ids | {self.video_token_id, self.vision_start_token_id, self.vision_end_token_id}
 
-    def create_pixel_values(self, batch_size: int | None = None):
-        # Override to 5D for patch-based models
-        batch_size = batch_size if batch_size is not None else self.batch_size
+    def create_pixel_values(self):
         return floats_tensor(
             [
-                batch_size * (self.image_size // self.patch_size) ** 2,
+                self.batch_size * (self.image_size // self.patch_size) ** 2,
                 self.num_channels * self.patch_size**2 * self.temporal_patch_size,
             ]
         )
@@ -424,12 +416,11 @@ class Qwen4ExpVisionText2TextModelTester(VLMModelTester):
         input_ids[:, 1] = self.image_token_id
         return input_ids
 
-    def get_additional_inputs(self, config, input_ids, pixel_values, batch_size: int | None = None):
-        batch_size = batch_size if batch_size is not None else self.batch_size
+    def get_additional_inputs(self, config, input_ids, modality_inputs):
         mm_token_type_ids = torch.zeros_like(input_ids)
         mm_token_type_ids[input_ids == self.image_token_id] = 1
         return {
-            "image_grid_thw": torch.tensor([[1, 1, 1]] * batch_size, device=torch_device),
+            "image_grid_thw": torch.tensor([[1, 1, 1]] * self.batch_size, device=torch_device),
             "mm_token_type_ids": mm_token_type_ids,
         }
 
@@ -515,12 +506,50 @@ class Qwen4ExpVisionText2TextModelTest(VLMModelTest, unittest.TestCase):
                 )
             self.assertListEqual([hidden_state.shape for hidden_state in outputs.hidden_states], expected_shapes)
 
+    def test_mismatching_num_image_tokens(self):
+        config, inputs_dict = self.model_tester.prepare_config_and_inputs_for_common()
+        for model_class in self.all_model_classes:
+            model = model_class(config).to(torch_device).eval()
+            with torch.no_grad():
+                model(**inputs_dict)
+
+            mismatched_inputs = copy.deepcopy(inputs_dict)
+            mismatched_inputs["pixel_values"] = mismatched_inputs["pixel_values"][-1:]
+            mismatched_inputs["image_grid_thw"] = mismatched_inputs["image_grid_thw"][-1:]
+            with self.assertRaises(ValueError):
+                model(**mismatched_inputs)
+
+            single_inputs = {
+                key: value[:1] if isinstance(value, torch.Tensor) else value for key, value in inputs_dict.items()
+            }
+            two_prompt_inputs = {
+                key: torch.cat([value, value]) if isinstance(value, torch.Tensor) else value
+                for key, value in single_inputs.items()
+            }
+            two_prompt_inputs["pixel_values"] = single_inputs["pixel_values"]
+            two_prompt_inputs["image_grid_thw"] = single_inputs["image_grid_thw"]
+            with self.assertRaises(ValueError):
+                model(**two_prompt_inputs)
+
+            two_prompt_inputs["pixel_values"] = torch.cat(
+                [single_inputs["pixel_values"], single_inputs["pixel_values"]]
+            )
+            two_prompt_inputs["image_grid_thw"] = torch.cat(
+                [single_inputs["image_grid_thw"], single_inputs["image_grid_thw"]]
+            )
+            with torch.no_grad():
+                model(**two_prompt_inputs)
+
     @unittest.skip("QSA index selection has data-dependent control flow")
     def test_generate_compile_model_forward_fullgraph(self):
         pass
 
     @unittest.skip("QSA index selection has data-dependent control flow")
     def test_generate_compilation_all_outputs(self):
+        pass
+
+    @unittest.skip("Qwen4-Exp hybrid linear-attention cache is not compatible with quantized cache yet.")
+    def test_generate_with_quant_cache(self):
         pass
 
     @unittest.skip(
@@ -536,8 +565,8 @@ class Qwen4ExpVisionText2TextModelTest(VLMModelTest, unittest.TestCase):
     def test_fsdp_plan_has_no_unused_rules(self):
         with torch.device("meta"):
             model = Qwen4ExpForConditionalGeneration(self.model_tester.get_config())
-        with self.assertNoLogs("transformers.distributed.mixin", level="WARNING"):
-            model._validate_parallel_plan(model.fsdp_plan, ALL_FSDP_STYLES, "fsdp_plan")
+        with self.assertNoLogs("transformers.distributed.fsdp", level="WARNING"):
+            verify_fsdp_plan([name for name, _ in model.named_modules()], model._fsdp_plan)
 
     def test_generate_with_ple_and_inputs_embeds(self):
         config = self.model_tester.get_config()

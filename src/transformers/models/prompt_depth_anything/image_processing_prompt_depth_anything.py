@@ -31,6 +31,7 @@ from ...processing_utils import ImagesKwargs, Unpack
 from ...utils import (
     TensorType,
     auto_docstring,
+    requires_backends,
 )
 
 
@@ -331,6 +332,7 @@ class PromptDepthAnythingImageProcessor(TorchvisionBackend):
             `list[dict[str, TensorType]]`: A list of dictionaries of tensors representing the processed depth
             predictions.
         """
+        requires_backends(self, "torch")
 
         predicted_depth = outputs.predicted_depth
 

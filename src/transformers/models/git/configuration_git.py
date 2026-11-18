@@ -80,9 +80,7 @@ class GitConfig(PreTrainedConfig):
     ```"""
 
     model_type = "git"
-    sub_configs_defaults = {
-        "vision_config": GitVisionConfig,
-    }
+    sub_configs = {"vision_config": GitVisionConfig}
 
     vision_config: dict | GitVisionConfig | None = None
     vocab_size: int = 30522
@@ -102,6 +100,14 @@ class GitConfig(PreTrainedConfig):
     bos_token_id: int | None = 101
     eos_token_id: int | list[int] | None = 102
     num_image_with_embedding: int | None = None
+
+    def __post_init__(self, **kwargs):
+        if self.vision_config is None:
+            self.vision_config = GitVisionConfig()
+            logger.info("vision_config is None. initializing the GitVisionConfig with default values.")
+        elif isinstance(self.vision_config, dict):
+            self.vision_config = GitVisionConfig(**self.vision_config)
+        super().__post_init__(**kwargs)
 
 
 __all__ = ["GitConfig", "GitVisionConfig"]

@@ -233,6 +233,7 @@ class AltCLIPPreTrainedModel(CLIPPreTrainedModel):
         "attentions": AltCLIPAttention,
     }
 
+    @torch.no_grad()
     def _init_weights(self, module):
         """Initialize the weights"""
         PreTrainedModel._init_weights(self, module)
@@ -274,7 +275,7 @@ class AltCLIPVisionModel(CLIPVisionModel):
         Examples:
 
         ```python
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
         >>> from PIL import Image
         >>> from transformers import AutoProcessor, AltCLIPVisionModel
@@ -314,7 +315,7 @@ class AltRobertaModel(AltCLIPPreTrainedModel):
         "attentions": AltRobertaSelfAttention,
     }
 
-    def __init__(self, config: AltCLIPTextConfig, add_pooling_layer=True):
+    def __init__(self, config, add_pooling_layer=True):
         r"""
         add_pooling_layer (bool, *optional*, defaults to `True`):
             Whether to add a pooling layer
@@ -389,7 +390,7 @@ class AltCLIPTextModel(AltCLIPPreTrainedModel):
     _input_embed_layer = "word_embeddings"
     base_model_prefix = "roberta"
 
-    def __init__(self, config: AltCLIPTextConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.roberta = AltRobertaModel(config, add_pooling_layer=False)
         self.transformation = nn.Linear(config.hidden_size, config.project_dim)
@@ -503,7 +504,7 @@ class AltCLIPModel(ChineseCLIPModel, AltCLIPPreTrainedModel):
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        pixel_values: torch.Tensor | None = None,
+        pixel_values: torch.FloatTensor | None = None,
         attention_mask: torch.Tensor | None = None,
         token_type_ids: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,

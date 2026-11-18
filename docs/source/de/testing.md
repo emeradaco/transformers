@@ -46,6 +46,7 @@ Es gibt 2 Testsuiten im Repository:
 
 ```bash
 RUN_SLOW=1 pytest tests/
+RUN_SLOW=1 pytest examples/
 ```
 
    Die Ergebnisse können Sie [hier](https://github.com/huggingface/transformers/actions) sehen.
@@ -527,7 +528,7 @@ einen normalen Prozess erzeugt, der dann mehrere Worker erzeugt und die IO-Pipes
 Hier sind einige Tests, die dies verwenden:
 
 - [test_trainer_distributed.py](https://github.com/huggingface/transformers/tree/main/tests/trainer/distributed/test_trainer_distributed.py)
-- [test_trainer_distributed_deepspeed.py](https://github.com/huggingface/transformers/tree/main/tests/trainer/distributed/test_trainer_distributed_deepspeed.py)
+- [test_deepspeed.py](https://github.com/huggingface/transformers/tree/main/tests/deepspeed/test_deepspeed.py)
 
 Um direkt mit der Ausführung zu beginnen, suchen Sie in diesen Tests nach dem Aufruf `execute_subprocess_async`.
 
@@ -733,7 +734,7 @@ from transformers.testing_utils import TestCasePlus
 
 class PathExampleTest(TestCasePlus):
     def test_something_involving_local_locations(self):
-        data_dir = self.tests_dir / "fixtures/tests_samples/wmt16"
+        data_dir = self.tests_dir / "fixtures/tests_samples/wmt_en_ro"
 ```
 
 Wenn Sie Pfade nicht über `pathlib` manipulieren müssen oder nur einen Pfad als String benötigen, können Sie jederzeit

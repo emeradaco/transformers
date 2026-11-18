@@ -28,6 +28,7 @@ from ...image_transforms import center_to_corners_format
 from ...utils import (
     TensorType,
     logging,
+    requires_backends,
 )
 from ...utils.import_utils import requires
 
@@ -158,6 +159,7 @@ class GroundingDinoImageProcessorPil(DetrImageProcessorPil):
             - "labels": Indexes of the classes predicted by the model on the image.
             - "boxes": Image bounding boxes in (top_left_x, top_left_y, bottom_right_x, bottom_right_y) format.
         """
+        requires_backends(self, ["torch"])
         batch_logits, batch_boxes = outputs.logits, outputs.pred_boxes
         batch_size = len(batch_logits)
 

@@ -22,9 +22,9 @@ from typing import Literal
 
 from huggingface_hub.dataclasses import strict
 
-from ...configuration_utils import PreTrainedConfig, SubConfigSpec
+from ...configuration_utils import PreTrainedConfig
 from ...utils import auto_docstring
-from ..auto import AutoConfig
+from ..auto import CONFIG_MAPPING, AutoConfig
 
 
 @auto_docstring(checkpoint="llava-hf/LLaVA-NeXT-Video-7B-hf")
@@ -63,23 +63,7 @@ class LlavaNextVideoConfig(PreTrainedConfig):
         "image_token_id": "image_token_index",
         "video_token_id": "video_token_index",
     }
-    sub_configs_defaults = {
-        "vision_config": SubConfigSpec(
-            config_class=AutoConfig,
-            model_type="clip_vision_model",
-            init_kwargs={
-                "intermediate_size": 4096,
-                "hidden_size": 1024,
-                "patch_size": 14,
-                "image_size": 336,
-                "num_hidden_layers": 24,
-                "num_attention_heads": 16,
-                "vocab_size": 32000,
-                "projection_dim": 768,
-            },
-        ),
-        "text_config": SubConfigSpec(config_class=AutoConfig, model_type="llama"),
-    }
+    sub_configs = {"text_config": AutoConfig, "vision_config": AutoConfig}
 
     vision_config: dict | PreTrainedConfig | None = None
     text_config: dict | PreTrainedConfig | None = None
@@ -97,7 +81,27 @@ class LlavaNextVideoConfig(PreTrainedConfig):
     video_seq_length: int = 288
 
     def __post_init__(self, **kwargs):
-        super().__post_init__(**kwargs)
+        if isinstance(self.vision_config, dict):
+            self.vision_config["model_type"] = self.vision_config.get("model_type", "clip_vision_model")
+            self.vision_config = CONFIG_MAPPING[self.vision_config["model_type"]](**self.vision_config)
+        elif self.vision_config is None:
+            self.vision_config = CONFIG_MAPPING["clip_vision_model"](
+                intermediate_size=4096,
+                hidden_size=1024,
+                patch_size=14,
+                image_size=336,
+                num_hidden_layers=24,
+                num_attention_heads=16,
+                vocab_size=32000,
+                projection_dim=768,
+            )
+
+        if isinstance(self.text_config, dict):
+            self.text_config["model_type"] = self.text_config.get("model_type", "llama")
+            self.text_config = CONFIG_MAPPING[self.text_config["model_type"]](**self.text_config)
+        elif self.text_config is None:
+            self.text_config = CONFIG_MAPPING["llama"]()
+
         self.image_grid_pinpoints = (
             self.image_grid_pinpoints
             if self.image_grid_pinpoints is not None
@@ -109,6 +113,8 @@ class LlavaNextVideoConfig(PreTrainedConfig):
         # need an ugly workaround and forward-pass the attr from text config
         if not self.tie_word_embeddings and self.text_config.tie_word_embeddings:
             self.tie_word_embeddings = self.text_config.tie_word_embeddings
+
+        super().__post_init__(**kwargs)
 
 
 __all__ = ["LlavaNextVideoConfig"]

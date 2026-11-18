@@ -70,13 +70,7 @@ def _json(text: str, args: dict) -> Any:
         working = re.sub(pattern, _capture, working, flags=re.DOTALL)
 
     if unquoted_keys:
-        # The first alternative swallows whole quoted strings (escapes included) and puts them back untouched,
-        # so that key-like text inside a string value is never rewritten. Only the second one is a bare key.
-        working = re.sub(
-            r'"(?:\\.|[^"\\])*"|(?<=[{,])(\w+):',
-            lambda m: m.group(0) if m.group(1) is None else f'"{m.group(1)}":',
-            working,
-        )
+        working = re.sub(r"(?<=[{,])(\w+):", r'"\1":', working)
 
     for i, s in enumerate(captured):
         working = working.replace(f"{_LAX_OPEN}{i}{_LAX_CLOSE}", json.dumps(s))
@@ -111,7 +105,6 @@ def _xml_inline(text: str, args: dict) -> dict:
     merge = args.get("merge_duplicates", False)
 
     out: dict[str, Any] = {}
-    merged: set[str] = set()
     for m in re.finditer(tag_pattern, text, flags=re.DOTALL):
         groups = m.groupdict()
         key = groups.get("key")
@@ -119,9 +112,8 @@ def _xml_inline(text: str, args: dict) -> dict:
             raise ValueError(f"xml-inline: tag_pattern must have a named group 'key'. Pattern: {tag_pattern}")
         value = _sub_parse(groups.get("value", ""), value_parser)
         if key in out and merge:
-            if key not in merged:
+            if not isinstance(out[key], list):
                 out[key] = [out[key]]
-                merged.add(key)
             out[key].append(value)
         else:
             out[key] = value

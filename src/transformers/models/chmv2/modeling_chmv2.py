@@ -398,10 +398,14 @@ class CHMv2ForDepthEstimation(CHMv2PreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        pixel_values: torch.Tensor,
+        pixel_values: torch.FloatTensor,
         labels: torch.LongTensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> DepthEstimatorOutput:
+        r"""
+        labels (`torch.LongTensor` of shape `(batch_size, height, width)`, *optional*):
+            Ground truth depth estimation maps for computing the loss.
+        """
         loss = None
         if labels is not None:
             raise NotImplementedError("Training is not implemented yet")

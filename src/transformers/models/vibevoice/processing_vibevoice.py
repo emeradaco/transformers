@@ -19,7 +19,6 @@ from ...feature_extraction_utils import BatchFeature
 from ...processing_utils import ProcessingKwargs, ProcessorMixin, Unpack
 from ...tokenization_utils_base import PreTokenizedInput, TextInput
 from ...utils import auto_docstring, is_soundfile_available, is_torch_available, logging
-from ...utils.deprecation import deprecate_attr
 from ...utils.import_utils import requires, requires_backends
 
 
@@ -33,12 +32,19 @@ if is_soundfile_available():
     import soundfile as sf
 
 
+# trf-ignore: TRF019, `sampling_rate` is recommended by the feature extractor
+class VibeVoiceProcessorKwargs(ProcessingKwargs, total=False):
+    _defaults = {
+        "audio_kwargs": {
+            "sampling_rate": 24000,
+        },
+    }
+
+
 @requires(backends=("torch",))
 @auto_docstring
 class VibeVoiceProcessor(ProcessorMixin):
-    audio_kwargs = {
-        "sampling_rate": 24000,
-    }
+    valid_processor_kwargs = VibeVoiceProcessorKwargs
 
     def __init__(
         self,
@@ -95,17 +101,23 @@ class VibeVoiceProcessor(ProcessorMixin):
         text: TextInput | PreTokenizedInput | list[TextInput] | list[PreTokenizedInput],
         audio: AudioInput | None = None,
         output_labels: bool | None = False,
-        **kwargs: Unpack[ProcessingKwargs],
+        **kwargs: Unpack[VibeVoiceProcessorKwargs],
     ) -> BatchFeature:
-        r"""
-        text (`str`, `List[str]`):
-            The input text(s) to process, typically prepared by apply_chat_template with audio token placeholders.
-        audio (`List[Union[str, np.ndarray]]`, *optional*):
-            Audio samples for speaker voice cloning. Should match the number of audio token placeholders in text.
-        output_labels (bool, *optional*, default=False):
-            Whether to return labels for training.
-        **kwargs:
-            Additional keyword arguments passed to the tokenizer and feature extractor.
+        """
+        Main method to process text inputs with optional voice samples.
+
+        This method processes text inputs (typically prepared by apply_chat_template) and optional voice samples for
+        voice cloning. It expands audio diffusion tokens based on the actual audio length.
+
+        Args:
+            text (`str`, `List[str]`):
+                The input text(s) to process, typically prepared by apply_chat_template with audio token placeholders.
+            audio (`List[Union[str, np.ndarray]]`, *optional*):
+                Audio samples for speaker voice cloning. Should match the number of audio token placeholders in text.
+            output_labels (bool, *optional*, default=False):
+                Whether to return labels for training.
+            **kwargs:
+                Additional keyword arguments passed to the tokenizer and feature extractor.
 
         Returns:
             [`BatchFeature`]: A [`BatchFeature`] with the following fields:
@@ -182,7 +194,5 @@ class VibeVoiceProcessor(ProcessorMixin):
                 saved_paths.append(file_path)
         return saved_paths
 
-
-__getattr__ = deprecate_attr(__name__, rename={"VibeVoiceProcessorKwargs": (ProcessingKwargs, "5.29.0")})
 
 __all__ = ["VibeVoiceProcessor"]

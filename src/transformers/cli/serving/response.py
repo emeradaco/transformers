@@ -430,7 +430,6 @@ class ResponseHandler(BaseHandler):
                 inputs,
                 gen_config,
                 gen_manager=gen_manager,
-                tools=tools,
             )
         else:
             return await self._non_streaming(
@@ -442,7 +441,6 @@ class ResponseHandler(BaseHandler):
                 inputs,
                 gen_config,
                 gen_manager=gen_manager,
-                tools=tools,
             )
 
     # ----- input conversion -----
@@ -571,10 +569,9 @@ class ResponseHandler(BaseHandler):
         inputs: dict,
         gen_config: "GenerationConfig",
         gen_manager: BaseGenerateManager,
-        tools=None,
     ) -> StreamingResponse:
         """Generate a streaming Responses API reply (SSE) using DirectStreamer."""
-        response_parser = build_response_parser(processor, model, inputs["input_ids"], tools=tools)
+        response_parser = build_response_parser(processor, model, inputs["input_ids"])
         queue, streamer = gen_manager.generate_streaming(
             model,
             processor,
@@ -678,7 +675,6 @@ class ResponseHandler(BaseHandler):
         inputs: dict,
         gen_config: "GenerationConfig",
         gen_manager: BaseGenerateManager,
-        tools=None,
     ) -> JSONResponse:
         """Generate a non-streaming Responses API reply (single JSON)."""
         content, input_len, generated_ids = await gen_manager.generate_non_streaming(
@@ -686,12 +682,7 @@ class ResponseHandler(BaseHandler):
         )
 
         content, reasoning_content, parsed_tool_calls = parse_assistant_message(
-            processor,
-            model,
-            generated_ids,
-            input_ids=inputs["input_ids"],
-            cleaned_content=content,
-            tools=tools,
+            processor, model, generated_ids, input_ids=inputs["input_ids"], cleaned_content=content
         )
 
         output_items = []

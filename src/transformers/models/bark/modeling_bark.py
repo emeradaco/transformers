@@ -35,12 +35,10 @@ from ...modeling_outputs import CausalLMOutputWithPast, MaskedLMOutput
 from ...modeling_utils import PreTrainedModel
 from ...utils import (
     auto_docstring,
-    get_current_accelerator,
     is_accelerate_available,
+    is_torch_accelerator_available,
     logging,
 )
-from ...utils.deprecation import deprecate_kwarg
-from ...utils.generic import is_flash_attention_requested
 from ..auto import AutoModel
 from .configuration_bark import (
     BarkCoarseConfig,
@@ -56,7 +54,7 @@ from .generation_configuration_bark import (
 )
 
 
-if is_flash_attn_available(kernels_fallback_ok=True):
+if is_flash_attn_available():
     from ...integrations.flash_attention import get_target_dtype
     from ...modeling_flash_attention_utils import _flash_attention_forward
 
@@ -147,12 +145,11 @@ class BarkSelfAttention(nn.Module):
 
         return attn_output, attn_weights
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         hidden_states,
         attention_mask=None,
-        cache=None,
+        past_key_values=None,
         use_cache=False,
         output_attentions=False,
         **kwargs,
@@ -164,8 +161,8 @@ class BarkSelfAttention(nn.Module):
         key = self._split_heads(key, self.num_heads, self.head_dim)
         value = self._split_heads(value, self.num_heads, self.head_dim)
 
-        if cache is not None:
-            key, value = cache.update(key, value, self.layer_idx, kwargs=kwargs)
+        if past_key_values is not None:
+            key, value = past_key_values.update(key, value, self.layer_idx)
 
         attn_output, attn_weights = self._attn(query, key, value, attention_mask)
 
@@ -191,6 +188,16 @@ class BarkSelfFlashAttention2(BarkSelfAttention):
         # Beware that with flash_attn<2.1, using q_seqlen != k_seqlen (except for the case q_seqlen == 1) produces a wrong mask (top-left).
         self._flash_attn_uses_top_left_mask = flash_attn_supports_top_left_mask()
 
+    def _split_heads(self, tensor, num_heads, attn_head_size):
+        """
+        Splits hidden_size dim into attn_head_size and num_heads
+        """
+        new_shape = tensor.size()[:-1] + (num_heads, attn_head_size)
+        tensor = tensor.view(new_shape)
+        # Flash attention requires the input to have the shape
+        # batch_size x seq_length x head_dim x hidden_dim - (batch, seq_length, head, head_features)
+        return tensor
+
     def _merge_heads(self, tensor, num_heads, attn_head_size):
         """
         Merges attn_head_size dim and num_attn_heads dim into hidden_size
@@ -200,12 +207,11 @@ class BarkSelfFlashAttention2(BarkSelfAttention):
         tensor = tensor.view(tensor.size()[:-2] + (num_heads * attn_head_size,))
         return tensor
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         hidden_states,
         attention_mask=None,
-        cache=None,
+        past_key_values=None,
         use_cache=False,
         output_attentions=False,
         **kwargs,
@@ -219,15 +225,15 @@ class BarkSelfFlashAttention2(BarkSelfAttention):
         key = self._split_heads(key, self.num_heads, self.head_dim)
         value = self._split_heads(value, self.num_heads, self.head_dim)
 
-        if cache is not None:
-            key, value = cache.update(key, value, self.layer_idx, kwargs=kwargs)
+        if past_key_values is not None:
+            key, value = past_key_values.update(key, value, self.layer_idx)
 
         target_dtype = get_target_dtype(query, self)  # if the query is in float32, this is the dtype to cast to for FA
 
         attn_output = _flash_attention_forward(
-            query.transpose(1, 2),
-            key.transpose(1, 2),
-            value.transpose(1, 2),
+            query,
+            key,
+            value,
             attention_mask,
             query_len,
             dropout=self.dropout if self.training else 0.0,
@@ -278,18 +284,16 @@ class BarkBlock(GradientCheckpointingLayer):
             self.layernorm_1 = nn.LayerNorm(config.hidden_size)
             self.layernorm_2 = nn.LayerNorm(config.hidden_size)
 
-        attn_implementation = (
-            "flash_attention_2" if is_flash_attention_requested(config) else config._attn_implementation
+        self.attn = BARK_ATTENTION_CLASSES[config._attn_implementation](
+            config, is_causal=is_causal, layer_idx=layer_idx
         )
-        self.attn = BARK_ATTENTION_CLASSES[attn_implementation](config, is_causal=is_causal, layer_idx=layer_idx)
 
         self.mlp = BarkMLP(config)
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         hidden_states,
-        cache=None,
+        past_key_values=None,
         attention_mask=None,
         use_cache=False,
         output_attentions=False,
@@ -299,7 +303,7 @@ class BarkBlock(GradientCheckpointingLayer):
 
         attn_outputs = self.attn(
             intermediary_hidden_states,
-            cache=cache,
+            past_key_values=past_key_values,
             attention_mask=attention_mask,
             use_cache=use_cache,
             output_attentions=output_attentions,
@@ -356,7 +360,7 @@ class BarkCausalModel(BarkPreTrainedModel, GenerationMixin):
     config: BarkSubModelConfig
     output_modalities = ("audio",)
 
-    def __init__(self, config: BarkSubModelConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.config = config
 
@@ -388,11 +392,10 @@ class BarkCausalModel(BarkPreTrainedModel, GenerationMixin):
         self.input_embeds_layer = new_embeddings
 
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.Tensor | None = None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.Tensor | None = None,
         labels: torch.LongTensor | None = None,
@@ -420,7 +423,7 @@ class BarkCausalModel(BarkPreTrainedModel, GenerationMixin):
         # then compute embeddings.
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
-        elif inputs_embeds is not None and cache is None:
+        elif inputs_embeds is not None and past_key_values is None:
             # we want to return the inputs_embeds in priority so that it is in line with a weird hack
             # of Bark which concatenate two bits of the inputs_embeds on the first forward pass of the semantic model
             pass
@@ -441,10 +444,10 @@ class BarkCausalModel(BarkPreTrainedModel, GenerationMixin):
                 )
                 use_cache = False
 
-        if use_cache and cache is None:
-            cache = DynamicCache(config=self.config)
+        if use_cache and past_key_values is None:
+            past_key_values = DynamicCache(config=self.config)
 
-        past_length = cache.get_seq_length() if cache is not None else 0
+        past_length = past_key_values.get_seq_length() if past_key_values is not None else 0
         inputs_embeds = inputs_embeds.to(self.position_embeds_layer.weight.device)
 
         if position_ids is None:
@@ -463,7 +466,6 @@ class BarkCausalModel(BarkPreTrainedModel, GenerationMixin):
             config=self.config,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
-            cache=cache,
         )
 
         hidden_states = self.drop(inputs_embeds + position_embeds)
@@ -478,7 +480,7 @@ class BarkCausalModel(BarkPreTrainedModel, GenerationMixin):
 
             outputs = block(
                 hidden_states,
-                cache=cache,
+                past_key_values=past_key_values,
                 attention_mask=attention_mask,
                 use_cache=use_cache,
                 output_attentions=output_attentions,
@@ -500,12 +502,14 @@ class BarkCausalModel(BarkPreTrainedModel, GenerationMixin):
         logits = self.lm_head(hidden_states)
 
         if not return_dict:
-            return tuple(v for v in [None, logits, cache, all_hidden_states, all_self_attentions] if v is not None)
+            return tuple(
+                v for v in [None, logits, past_key_values, all_hidden_states, all_self_attentions] if v is not None
+            )
 
         return CausalLMOutputWithPast(
             loss=loss,
             logits=logits,
-            cache=cache,
+            past_key_values=past_key_values,
             hidden_states=all_hidden_states,
             attentions=all_self_attentions,
         )
@@ -663,9 +667,9 @@ class BarkCoarseModel(BarkCausalModel):
             history_prompt (`Optional[dict[str,torch.Tensor]]`):
                 Optional `Bark` speaker prompt.
         Returns:
-            `tuple(torch.Tensor)`:
-            - **x_semantic_history** (`torch.Tensor` -- Processed semantic speaker prompt.
-            - **x_coarse_history** (`torch.Tensor`) -- Processed coarse speaker prompt.
+            `tuple(torch.FloatTensor)`:
+            - **x_semantic_history** (`torch.FloatTensor` -- Processed semantic speaker prompt.
+            - **x_coarse_history** (`torch.FloatTensor`) -- Processed coarse speaker prompt.
         """
         if history_prompt is not None:
             x_semantic_history = torch.repeat_interleave(history_prompt["semantic_prompt"][None], batch_size, dim=0)
@@ -862,7 +866,7 @@ class BarkFineModel(BarkPreTrainedModel):
     config: BarkFineConfig
     main_input_name = "codebook_idx"
 
-    def __init__(self, config: BarkFineConfig):
+    def __init__(self, config):
         # non-causal gpt-like model with one embedding layer and one lm_head for each codebook of Encodec
         super().__init__(config)
         self.config = config
@@ -1254,7 +1258,7 @@ class BarkFineModel(BarkPreTrainedModel):
 class BarkModel(BarkPreTrainedModel, GenerationMixin):
     config: BarkConfig
 
-    def __init__(self, config: BarkConfig):
+    def __init__(self, config):
         super().__init__(config)
 
         self.semantic = BarkSemanticModel(config.semantic_config)
@@ -1311,7 +1315,9 @@ class BarkModel(BarkPreTrainedModel, GenerationMixin):
         else:
             raise ImportError("`enable_model_cpu_offload` requires `accelerate`.")
 
-        device_type = (get_current_accelerator() or torch.device("cuda")).type
+        device_type = "cuda"
+        if is_torch_accelerator_available():
+            device_type = torch.accelerator.current_accelerator().type
         device = torch.device(f"{device_type}:{accelerator_id}")
 
         torch_accelerator_module = getattr(torch, device_type)

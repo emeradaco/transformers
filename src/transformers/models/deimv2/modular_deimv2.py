@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import copy
 from dataclasses import dataclass
 
 import torch
@@ -27,6 +26,7 @@ from ...processing_utils import Unpack
 from ...utils import TransformersKwargs, auto_docstring, logging
 from ...utils.generic import merge_with_config_defaults
 from ...utils.output_capturing import OutputRecorder, capture_outputs
+from ..auto import AutoConfig
 from ..d_fine.configuration_d_fine import DFineConfig
 from ..d_fine.modeling_d_fine import (
     DFineAIFILayer,
@@ -177,6 +177,9 @@ class Deimv2Config(DFineConfig):
         `False` for RepNCSPELAN5 (used by DINOv3 variants).
     """
 
+    model_type = "deimv2"
+    sub_configs = {"backbone_config": AutoConfig}
+
     eval_size: list[int] | tuple[int, int] | None = None
     weight_loss_mal: float = 1.0
     use_dense_one_to_one: bool = True
@@ -206,13 +209,13 @@ class Deimv2ModelOutput(DFineModelOutput):
 @dataclass
 class Deimv2EncoderOutput(ModelOutput):
     r"""
-    feature_maps (`list[torch.Tensor]`):
+    feature_maps (`list[torch.FloatTensor]`):
         List of multi-scale feature maps from the encoder, one per feature level.
     """
 
-    feature_maps: list[torch.Tensor] = None
-    hidden_states: tuple[torch.Tensor, ...] | None = None
-    attentions: tuple[torch.Tensor, ...] | None = None
+    feature_maps: list[torch.FloatTensor] = None
+    hidden_states: tuple[torch.FloatTensor, ...] | None = None
+    attentions: tuple[torch.FloatTensor, ...] | None = None
 
 
 class Deimv2RMSNorm(LlamaRMSNorm):
@@ -424,6 +427,7 @@ class Deimv2DecoderLayer(DFineDecoderLayer):
 class Deimv2PreTrainedModel(DFinePreTrainedModel):
     _no_split_modules = [r"Deimv2HybridEncoder", r"Deimv2LiteEncoder", r"Deimv2DecoderLayer"]
 
+    @torch.no_grad()
     def _init_weights(self, module):
         super()._init_weights(module)
 
@@ -438,7 +442,7 @@ class Deimv2PreTrainedModel(DFinePreTrainedModel):
 
 # This follows DFineConvEncoder, with optional projections added after the backbone features.
 class Deimv2ConvEncoder(Deimv2PreTrainedModel):
-    def __init__(self, config: Deimv2Config):
+    def __init__(self, config):
         super().__init__(config)
 
         backbone = load_backbone(config)
@@ -610,7 +614,7 @@ class Deimv2HybridEncoder(DFineHybridEncoder):
     ) -> Deimv2EncoderOutput:
         r"""
         Args:
-            inputs_embeds (`list[torch.Tensor]`):
+            inputs_embeds (`list[torch.FloatTensor]`):
                 Multi-scale feature maps from the backbone (one tensor per feature level) passed to the encoder.
         """
         feature_maps = inputs_embeds
@@ -702,10 +706,10 @@ class Deimv2Model(DFineModel):
 
     def forward(
         self,
-        pixel_values: torch.Tensor,
+        pixel_values: torch.FloatTensor,
         pixel_mask: torch.LongTensor | None = None,
-        encoder_outputs: torch.Tensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        encoder_outputs: torch.FloatTensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         labels: list[dict] | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ):
@@ -898,8 +902,8 @@ class Deimv2ForObjectDetection(DFineForObjectDetection):
                 ]
             )
 
-        self.model.decoder.class_embed = copy.deepcopy(self.class_embed)
-        self.model.decoder.bbox_embed = copy.deepcopy(self.bbox_embed)
+        self.model.decoder.class_embed = self.class_embed
+        self.model.decoder.bbox_embed = self.bbox_embed
         self.post_init()
 
     def forward(**super_kwargs):

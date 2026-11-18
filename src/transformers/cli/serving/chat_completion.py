@@ -74,6 +74,7 @@ UNUSED_CHAT_COMPLETION_FIELDS = {
     "function_call",
     "functions",
     "logprobs",
+    "max_completion_tokens",
     "metadata",
     "modalities",
     "n",
@@ -163,7 +164,6 @@ class ChatCompletionHandler(BaseHandler):
                 inputs,
                 gen_config,
                 gen_manager=gen_manager,
-                tools=body.get("tools"),
             )
         else:
             return await self._non_streaming(
@@ -174,7 +174,6 @@ class ChatCompletionHandler(BaseHandler):
                 inputs,
                 gen_config,
                 gen_manager=gen_manager,
-                tools=body.get("tools"),
             )
 
     # ----- streaming -----
@@ -188,10 +187,9 @@ class ChatCompletionHandler(BaseHandler):
         inputs: dict,
         gen_config: "GenerationConfig",
         gen_manager: BaseGenerateManager,
-        tools=None,
     ) -> StreamingResponse:
         """Stream tokens as SSE via DirectStreamer."""
-        response_parser = build_response_parser(processor, model, inputs["input_ids"], tools=tools)
+        response_parser = build_response_parser(processor, model, inputs["input_ids"])
         queue, streamer = gen_manager.generate_streaming(
             model,
             processor,
@@ -291,7 +289,6 @@ class ChatCompletionHandler(BaseHandler):
         inputs: dict,
         gen_config: "GenerationConfig",
         gen_manager: BaseGenerateManager,
-        tools=None,
     ) -> JSONResponse:
         """Run generation and return a JSONResponse."""
         content, input_len, generated_ids = await gen_manager.generate_non_streaming(
@@ -307,7 +304,7 @@ class ChatCompletionHandler(BaseHandler):
         )
 
         content, reasoning_content, parsed_tool_calls = parse_assistant_message(
-            processor, model, generated_ids, input_ids=inputs["input_ids"], cleaned_content=content, tools=tools
+            processor, model, generated_ids, input_ids=inputs["input_ids"], cleaned_content=content
         )
         tool_calls = None
         if parsed_tool_calls:
@@ -343,13 +340,11 @@ class ChatCompletionHandler(BaseHandler):
     # ----- helpers -----
 
     def _build_generation_config(self, body: dict, model_generation_config: "GenerationConfig", use_cb: bool = False):
-        """Apply Chat Completions params (``max_completion_tokens``, ``max_tokens``, ``frequency_penalty``,
-        ``logit_bias``, ``stop``) on top of the base generation config."""
+        """Apply Chat Completions params (``max_tokens``, ``frequency_penalty``, ``logit_bias``,
+        ``stop``) on top of the base generation config."""
         generation_config = super()._build_generation_config(body, model_generation_config, use_cb=use_cb)
 
-        if body.get("max_completion_tokens") is not None:
-            generation_config.max_new_tokens = int(body["max_completion_tokens"])
-        elif body.get("max_tokens") is not None:
+        if body.get("max_tokens") is not None:
             generation_config.max_new_tokens = int(body["max_tokens"])
         if body.get("frequency_penalty") is not None:
             generation_config.repetition_penalty = 1.0 + float(body["frequency_penalty"])

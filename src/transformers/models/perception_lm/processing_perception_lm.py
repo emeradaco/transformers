@@ -17,11 +17,21 @@ Processor class for PerceptionLM.
 from ...image_utils import get_image_size, to_numpy_array
 from ...processing_utils import MultiModalData, ProcessingKwargs, ProcessorMixin
 from ...utils import auto_docstring
-from ...utils.deprecation import deprecate_attr
+
+
+class PerceptionLMProcessorKwargs(ProcessingKwargs, total=False):
+    _defaults = {
+        "text_kwargs": {
+            "padding": False,
+            "return_mm_token_type_ids": False,
+        },
+    }
 
 
 @auto_docstring
 class PerceptionLMProcessor(ProcessorMixin):
+    valid_processor_kwargs = PerceptionLMProcessorKwargs
+
     def __init__(
         self,
         video_processor=None,
@@ -83,7 +93,8 @@ class PerceptionLMProcessor(ProcessorMixin):
 
         vision_data = {}
         if image_sizes is not None:
-            images_kwargs = self._merge_kwargs(**kwargs)["images_kwargs"]
+            images_kwargs = PerceptionLMProcessorKwargs._defaults.get("images_kwargs", {})
+            images_kwargs.update(kwargs)
             tile_size = images_kwargs.get("tile_size", None) or self.image_processor.tile_size
             vision_input_type = images_kwargs.get("vision_input_type", None) or self.image_processor.vision_input_type
 
@@ -112,7 +123,5 @@ class PerceptionLMProcessor(ProcessorMixin):
             vision_data.update({"num_image_tokens": num_image_tokens, "num_image_patches": num_image_patches})
         return MultiModalData(**vision_data)
 
-
-__getattr__ = deprecate_attr(__name__, rename={"PerceptionLMProcessorKwargs": (ProcessingKwargs, "5.29.0")})
 
 __all__ = ["PerceptionLMProcessor"]

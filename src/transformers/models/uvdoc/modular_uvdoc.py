@@ -24,9 +24,10 @@ from ...activations import ACT2FN
 from ...backbone_utils import (
     BackboneConfigMixin,
     BackboneMixin,
+    consolidate_backbone_kwargs_to_config,
     filter_output_hidden_states,
 )
-from ...configuration_utils import PreTrainedConfig, SubConfigSpec
+from ...configuration_utils import PreTrainedConfig
 from ...feature_extraction_utils import BatchFeature
 from ...image_processing_backends import TorchvisionBackend
 from ...image_transforms import group_images_by_shape, reorder_images
@@ -37,6 +38,7 @@ from ...modeling_utils import PreTrainedModel
 from ...processing_utils import Unpack
 from ...utils import TransformersKwargs, auto_docstring, can_return_tuple
 from ...utils.generic import TensorType, merge_with_config_defaults
+from ...utils.import_utils import requires
 from ...utils.output_capturing import capture_outputs
 from ..auto import AutoConfig
 from ..pp_lcnet.modeling_pp_lcnet import PPLCNetConvLayer
@@ -138,22 +140,26 @@ class UVDocConfig(PreTrainedConfig):
     """
 
     model_type = "uvdoc"
-    sub_configs_defaults = {
-        "backbone_config": SubConfigSpec(
-            config_class=AutoConfig,
-            model_type="uvdoc_backbone",
-        ),
-    }
-
+    sub_configs = {"backbone_config": AutoConfig}
     backbone_config: dict | PreTrainedConfig | None = None
+
     hidden_act: str = "prelu"
     padding_mode: str = "reflect"
     kernel_size: int = 5
     bridge_connector: list[int] | tuple[int, ...] = (128, 128)
     out_point_positions2D: Sequence[list[int] | tuple[int, ...]] = ((128, 32), (32, 2))
 
+    def __post_init__(self, **kwargs):
+        self.backbone_config, kwargs = consolidate_backbone_kwargs_to_config(
+            backbone_config=self.backbone_config,
+            default_config_type="uvdoc_backbone",
+            **kwargs,
+        )
+        super().__post_init__(**kwargs)
+
 
 @auto_docstring
+@requires(backends=("torch",))
 class UVDocImageProcessor(TorchvisionBackend):
     do_rescale = True
     do_resize = True
@@ -471,6 +477,7 @@ class UVDocPreTrainedModel(PPOCRV5ServerDetPreTrainedModel):
         "hidden_states": UVDocBridgeBlock,
     }
 
+    @torch.no_grad()
     def _init_weights(self, module):
         """Initialize the weights."""
         PreTrainedModel._init_weights(self, module)
@@ -479,7 +486,7 @@ class UVDocPreTrainedModel(PPOCRV5ServerDetPreTrainedModel):
 
 
 class UVDocBridge(UVDocPreTrainedModel):
-    def __init__(self, config: UVDocConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.bridge = nn.ModuleList([])
         for bridge_index in range(len(config.stage_configs)):
@@ -526,7 +533,7 @@ class UVDocBackbone(BackboneMixin, UVDocPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        pixel_values: torch.Tensor,
+        pixel_values: torch.FloatTensor,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BackboneOutput:
         hidden_states = self.resnet(pixel_values)
@@ -587,9 +594,9 @@ class UVDocModel(UVDocPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        pixel_values: torch.Tensor,
+        pixel_values: torch.FloatTensor,
         **kwargs: Unpack[TransformersKwargs],
-    ) -> tuple[torch.Tensor] | BaseModelOutputWithNoAttention:
+    ) -> tuple[torch.FloatTensor] | BaseModelOutputWithNoAttention:
         backbone_outputs = self.backbone(pixel_values, **kwargs)
         fused_outputs = torch.cat(backbone_outputs.feature_maps, dim=1)
         last_hidden_state = self.head(fused_outputs, **kwargs)

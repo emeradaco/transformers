@@ -16,53 +16,50 @@ rendered properly in your Markdown viewer.
 
 # EETQ
 
-[Easy and Efficient Quantization for Transformers (EETQ)](https://github.com/NetEase-FuXi/EETQ) quantizes weights to int8 with one scale per output channel, and runs the matmul with int8 weights and 16-bit activations. Use it for 8-bit weight-only quantization on NVIDIA GPUs without calibration data.
+The [Easy & Efficient Quantization for Transformers (EETQ)](https://github.com/NetEase-FuXi/EETQ) library supports int8 weight-only per-channel quantization for NVIDIA GPUs. It uses high-performance GEMM and GEMV kernels from [FasterTransformer](https://github.com/NVIDIA/FasterTransformer) and [TensorRT-LLM](https://github.com/NVIDIA/TensorRT-LLM). The attention layer is optimized with [FlashAttention2](https://github.com/Dao-AILab/flash-attention). No calibration dataset is required, and the model doesn't need to be pre-quantized. Accuracy degradation is negligible owing to the per-channel quantization.
 
-The table below summarizes what EETQ supports in Transformers.
+EETQ further supports fine-tuning with [PEFT](https://huggingface.co/docs/peft).
 
-| | |
-|---|---|
-| Config | [`EetqConfig`] |
-| `quant_method` | `eetq` |
-| Workflow | Quantize while loading |
-| Bits | 8 |
-| Hardware | CUDA |
-| Save | ✅ |
-| Fine-tune | ✅ |
-| Auto-compile | ❌ |
+Install EETQ from the [release page](https://github.com/NetEase-FuXi/EETQ/releases) or [source code](https://github.com/NetEase-FuXi/EETQ). CUDA 11.4+ is required for EETQ.
 
-## Install the EETQ kernels
-
-Transformers downloads the EETQ kernels from the [kernels-community/quantization-eetq](https://huggingface.co/kernels-community/quantization-eetq) repository on the Hub, so you don't need to build EETQ. Install the [kernels](https://huggingface.co/docs/kernels/index) and [Accelerate](https://huggingface.co/docs/accelerate/index) libraries.
+<hfoptions id="install">
+<hfoption id="release page">
 
 ```bash
-pip install -U "transformers[kernels]" accelerate
+pip install --no-cache-dir https://github.com/NetEase-FuXi/EETQ/releases/download/v1.0.0/EETQ-1.0.0+cu121+torch2.1.2-cp310-cp310-linux_x86_64.whl
 ```
 
-## Quantize a model with EETQ
+</hfoption>
+<hfoption id="source code">
 
-Create an [`EetqConfig`] and pass it to [`~PreTrainedModel.from_pretrained`]. `weights` sets the weight dtype and only accepts `"int8"`, which is the default.
+```bash
+git clone https://github.com/NetEase-FuXi/EETQ.git
+cd EETQ/
+git submodule update --init --recursive
+pip install .
+```
+
+</hfoption>
+</hfoptions>
+
+Quantize a model on-the-fly by defining the quantization data type in [`EetqConfig`].
 
 ```py
-import torch
 from transformers import AutoModelForCausalLM, EetqConfig
 
 quantization_config = EetqConfig("int8")
 model = AutoModelForCausalLM.from_pretrained(
-    "Qwen/Qwen3-8B",
-    quantization_config=quantization_config,
-    dtype=torch.float16,
-    device_map="cuda",
+    "meta-llama/Llama-3.1-8B",
+    dtype="auto",
+    device_map="auto",
+    quantization_config=quantization_config
 )
 ```
 
-Load the model with `dtype=torch.float16` for the best efficiency. EETQ stores its scales in fp16.
+Save the quantized model with [`~PreTrainedModel.save_pretrained`] so it can be reused again with [`~PreTrainedModel.from_pretrained`].
 
-## Limitations
-
-- EETQ needs a CUDA GPU. Loading without one raises a `RuntimeError`.
-- EETQ can't offload to the CPU or disk. A `device_map` that includes `"cpu"` or `"disk"` raises a `ValueError`.
-
-## Resources
-
-- [EETQ](https://github.com/NetEase-FuXi/EETQ) repository
+```py
+quant_path = "/path/to/save/quantized/model"
+model.save_pretrained(quant_path)
+model = AutoModelForCausalLM.from_pretrained(quant_path, device_map="auto")
+```

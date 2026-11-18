@@ -68,12 +68,8 @@ from transformers.utils.quantization_config import GemmaQuantizationConfig
 # ==== Internal Constants and Classes ====
 
 # The correct chat templates were already uploaded to those 2 repos, so download from there
-_CHAT_TEMPLATE = pathlib.Path(cached_file("gg-hf-gg/gemma-4-E4B-it", "chat_template.jinja")).read_text(
-    encoding="utf-8"
-)
-_CHAT_TEMPLATE_LARGE = pathlib.Path(cached_file("gg-hf-gg/gemma-4-31B-it", "chat_template.jinja")).read_text(
-    encoding="utf-8"
-)
+_CHAT_TEMPLATE = pathlib.Path(cached_file("gg-hf-gg/gemma-4-E4B-it", "chat_template.jinja")).read_text()
+_CHAT_TEMPLATE_LARGE = pathlib.Path(cached_file("gg-hf-gg/gemma-4-31B-it", "chat_template.jinja")).read_text()
 
 _RESPONSE_TEMPLATE = {
     "defaults": {"role": "assistant"},
@@ -82,7 +78,7 @@ _RESPONSE_TEMPLATE = {
     # model continues from there, so we accept either anchor and truncate past the latest one.
     "start_anchor": ["<|turn>model\n", "<tool_response|>"],
     "fields": {
-        "reasoning_content": {
+        "thinking": {
             "open": "<|channel>thought\n",
             "close": "<channel|>",
             "content": "text",

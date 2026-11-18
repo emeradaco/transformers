@@ -23,7 +23,6 @@ from transformers import (
 )
 from transformers.testing_utils import (
     Expectations,
-    is_flaky,
     require_torch,
     require_vision,
     slow,
@@ -215,15 +214,6 @@ class RfDetrModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCase):
     test_missing_keys = False
     test_resize_embeddings = False
     model_split_percents = [0.5, 0.87, 0.9]
-
-    @is_flaky(
-        max_attempts=3,
-        description="Tiny floating-point non-determinism in earlier layers may cause top_k to select "
-        "different proposal indices, which propagates to later outputs differing at scale ~1.0. "
-        "See PR #48869 for more details.",
-    )
-    def test_save_load(self):
-        super().test_save_load()
 
     # special case for head models
     def _prepare_for_class(self, inputs_dict, model_class, return_labels=False):
@@ -472,21 +462,18 @@ class RfDetrModelIntegrationTest(unittest.TestCase):
             {
                 ("cuda", (8, 0)): [17, 17, 75, 75, 63],
                 ("xpu", None): [17, 17, 75, 75, 63],
-                ("cpu", None): [17, 17, 75, 75, 63],
             }
         )
         score_expectations = Expectations(
             {
-                ("cuda", (8, 0)): [0.960207, 0.934029, 0.896868, 0.718928, 0.707891],
-                ("xpu", None): [0.960207, 0.934029, 0.896868, 0.718928, 0.707891],
-                ("cpu", None): [0.960285, 0.934246, 0.896883, 0.718877, 0.707271],
+                ("cuda", (8, 0)): [0.959521, 0.931229, 0.897797, 0.7286, 0.672863],
+                ("xpu", None): [0.959521, 0.931229, 0.897797, 0.7286, 0.672863],
             }
         )
         box_expectations = Expectations(
             {
-                ("cuda", (8, 0)): [7.24499, 54.62048, 318.17670, 472.14398],
-                ("xpu", None): [7.24499, 54.62048, 318.17670, 472.14398],
-                ("cpu", None): [7.24640, 54.62370, 318.17166, 472.14819],
+                ("cuda", (8, 0)): [7.41339, 54.62234, 318.51614, 472.17816],
+                ("xpu", None): [7.41339, 54.62234, 318.51614, 472.17816],
             }
         )
         expected_labels = torch.tensor(label_expectations.get_expectation(), device=torch_device)
@@ -533,21 +520,18 @@ class RfDetrModelIntegrationTest(unittest.TestCase):
             {
                 ("cuda", (8, 0)): [17, 17, 75, 75, 63],
                 ("xpu", None): [17, 17, 75, 75, 63],
-                ("cpu", None): [17, 17, 75, 75, 63],
             }
         )
         od_score_expectations = Expectations(
             {
-                ("cuda", (8, 0)): [0.944035, 0.910815, 0.907229, 0.819838, 0.405123],
-                ("xpu", None): [0.944035, 0.910815, 0.907229, 0.819838, 0.405123],
-                ("cpu", None): [0.944035, 0.910815, 0.907229, 0.819837, 0.405120],
+                ("cuda", (8, 0)): [0.944051, 0.907934, 0.906093, 0.848789, 0.388786],
+                ("xpu", None): [0.944051, 0.907934, 0.906093, 0.848789, 0.388786],
             }
         )
         od_box_expectations = Expectations(
             {
-                ("cuda", (8, 0)): [9.45281, 53.83556, 318.41138, 471.58243],
-                ("xpu", None): [9.45281, 53.83556, 318.41138, 471.58243],
-                ("cpu", None): [9.45285, 53.83560, 318.41138, 471.58237],
+                ("cuda", (8, 0)): [10.07031, 54.00349, 317.46234, 471.93063],
+                ("xpu", None): [10.07031, 54.00349, 317.46234, 471.93063],
             }
         )
         expected_od_labels = torch.tensor(od_label_expectations.get_expectation(), device=torch_device)
@@ -571,14 +555,12 @@ class RfDetrModelIntegrationTest(unittest.TestCase):
             {
                 ("cuda", (8, 0)): [17, 17, 75, 75],
                 ("xpu", None): [17, 17, 75, 75],
-                ("cpu", None): [17, 17, 75, 75],
             }
         )
         instance_score_expectations = Expectations(
             {
-                ("cuda", (8, 0)): [0.944035, 0.910815, 0.907229, 0.819838],
-                ("xpu", None): [0.944035, 0.910815, 0.907229, 0.819838],
-                ("cpu", None): [0.944035, 0.910815, 0.907229, 0.819837],
+                ("cuda", (8, 0)): [0.944051, 0.907934, 0.906093, 0.848789],
+                ("xpu", None): [0.944051, 0.907934, 0.906093, 0.848789],
             }
         )
         expected_instance_labels = torch.tensor(instance_label_expectations.get_expectation(), device=torch_device)
@@ -597,9 +579,8 @@ class RfDetrModelIntegrationTest(unittest.TestCase):
 
         pred_masks_head_expectations = Expectations(
             {
-                ("cuda", (8, 0)): [-13.01990, -13.06471, -13.93228, -13.86109, -13.67009],
-                ("xpu", None): [-13.01990, -13.06471, -13.93228, -13.86109, -13.67009],
-                ("cpu", None): [-13.01991, -13.06470, -13.93225, -13.86107, -13.67006],
+                ("cuda", (8, 0)): [-13.19589, -13.15982, -13.96006, -13.92868, -13.74562],
+                ("xpu", None): [-13.19589, -13.15982, -13.96006, -13.92868, -13.74562],
             }
         )
 
@@ -608,9 +589,8 @@ class RfDetrModelIntegrationTest(unittest.TestCase):
 
         mask_pixel_count_expectations = Expectations(
             {
-                ("cuda", (8, 0)): [51784, 60323, 4187, 2177],
-                ("xpu", None): [51784, 60323, 4187, 2177],
-                ("cpu", None): [51784, 60323, 4187, 2177],
+                ("cuda", (8, 0)): [52141, 60564, 4180, 2157],
+                ("xpu", None): [52141, 60564, 4180, 2157],
             }
         )
 

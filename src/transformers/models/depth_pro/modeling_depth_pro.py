@@ -38,16 +38,16 @@ logger = logging.get_logger(__name__)
 @dataclass
 class DepthProOutput(ModelOutput):
     r"""
-    last_hidden_state (`torch.Tensor` of shape `(batch_size, n_patches_per_batch, sequence_length, hidden_size)`):
+    last_hidden_state (`torch.FloatTensor` of shape `(batch_size, n_patches_per_batch, sequence_length, hidden_size)`):
         Sequence of hidden-states at the output of the last layer of the model.
-    features (`Union[torch.Tensor, List[torch.Tensor]]`, *optional*):
+    features (`Union[torch.FloatTensor, List[torch.FloatTensor]]`, *optional*):
         Features from encoders. Can be a single feature or a list of features.
     """
 
-    last_hidden_state: torch.Tensor | None = None
-    features: torch.Tensor | list[torch.Tensor] = None
-    hidden_states: tuple[torch.Tensor, ...] | None = None
-    attentions: tuple[torch.Tensor, ...] | None = None
+    last_hidden_state: torch.FloatTensor | None = None
+    features: torch.FloatTensor | list[torch.FloatTensor] = None
+    hidden_states: tuple[torch.FloatTensor, ...] | None = None
+    attentions: tuple[torch.FloatTensor, ...] | None = None
 
 
 @auto_docstring(
@@ -58,17 +58,17 @@ class DepthProOutput(ModelOutput):
 @dataclass
 class DepthProDepthEstimatorOutput(ModelOutput):
     r"""
-    loss (`torch.Tensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
+    loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
         Classification (or regression if config.num_labels==1) loss.
-    field_of_view (`torch.Tensor` of shape `(batch_size,)`, *optional*, returned when `use_fov_model` is provided):
+    field_of_view (`torch.FloatTensor` of shape `(batch_size,)`, *optional*, returned when `use_fov_model` is provided):
         Field of View Scaler.
     """
 
-    loss: torch.Tensor | None = None
-    predicted_depth: torch.Tensor | None = None
-    field_of_view: torch.Tensor | None = None
-    hidden_states: tuple[torch.Tensor, ...] | None = None
-    attentions: tuple[torch.Tensor, ...] | None = None
+    loss: torch.FloatTensor | None = None
+    predicted_depth: torch.FloatTensor | None = None
+    field_of_view: torch.FloatTensor | None = None
+    hidden_states: tuple[torch.FloatTensor, ...] | None = None
+    attentions: tuple[torch.FloatTensor, ...] | None = None
 
 
 def split_to_patches(pixel_values: torch.Tensor, patch_size: int, overlap_ratio: float) -> torch.Tensor:
@@ -610,6 +610,7 @@ class DepthProPreTrainedModel(PreTrainedModel):
     _no_split_modules = ["DepthProPreActResidualLayer"]
     _keys_to_ignore_on_load_unexpected = ["fov_model.*"]
 
+    @torch.no_grad()
     def _init_weights(self, module):
         """Initialize the weights"""
         super()._init_weights(module)
@@ -621,7 +622,7 @@ class DepthProPreTrainedModel(PreTrainedModel):
 
 @auto_docstring
 class DepthProModel(DepthProPreTrainedModel):
-    def __init__(self, config: DepthProConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.config = config
         self.encoder = DepthProEncoder(config)
@@ -635,7 +636,7 @@ class DepthProModel(DepthProPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        pixel_values: torch.Tensor,
+        pixel_values: torch.FloatTensor,
         output_attentions: bool | None = None,
         output_hidden_states: bool | None = None,
         return_dict: bool | None = None,
@@ -647,7 +648,7 @@ class DepthProModel(DepthProPreTrainedModel):
         ```python
         >>> import torch
         >>> from PIL import Image
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
         >>> from transformers import AutoProcessor, DepthProModel
 
@@ -992,7 +993,7 @@ class DepthProDepthEstimationHead(nn.Module):
     """
 )
 class DepthProForDepthEstimation(DepthProPreTrainedModel):
-    def __init__(self, config: DepthProConfig, use_fov_model=None):
+    def __init__(self, config, use_fov_model=None):
         r"""
         use_fov_model (bool, *optional*):
             Whether to use the field of view model.
@@ -1019,7 +1020,7 @@ class DepthProForDepthEstimation(DepthProPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        pixel_values: torch.Tensor,
+        pixel_values: torch.FloatTensor,
         labels: torch.LongTensor | None = None,
         output_attentions: bool | None = None,
         output_hidden_states: bool | None = None,
@@ -1027,13 +1028,16 @@ class DepthProForDepthEstimation(DepthProPreTrainedModel):
         **kwargs,
     ) -> tuple[torch.Tensor] | DepthProDepthEstimatorOutput:
         r"""
+        labels (`torch.LongTensor` of shape `(batch_size, height, width)`, *optional*):
+            Ground truth depth estimation maps for computing the loss.
+
         Examples:
 
         ```python
         >>> from transformers import AutoImageProcessor, DepthProForDepthEstimation
         >>> import torch
         >>> from PIL import Image
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
 
         >>> url = "http://images.cocodataset.org/val2017/000000039769.jpg"

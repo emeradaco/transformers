@@ -118,7 +118,7 @@ def validate_and_format_image_pairs(images: ImageInput):
     raise ValueError(error_message)
 
 
-@auto_docstring
+@requires(backends=("torch",))
 class LightGlueImageProcessorPil(PilBackend):
     valid_kwargs = LightGlueImageProcessorKwargs
     resample = PILImageResampling.BILINEAR

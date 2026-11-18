@@ -25,14 +25,7 @@ from ...feature_extraction_utils import FeatureExtractionMixin
 from ...image_processing_utils import ImageProcessingMixin
 from ...processing_utils import ProcessorMixin
 from ...tokenization_python import TOKENIZER_CONFIG_FILE
-from ...utils import (
-    FEATURE_EXTRACTOR_NAME,
-    PROCESSOR_NAME,
-    VIDEO_PROCESSOR_NAME,
-    cached_file,
-    logging,
-    resolve_revision,
-)
+from ...utils import FEATURE_EXTRACTOR_NAME, PROCESSOR_NAME, VIDEO_PROCESSOR_NAME, cached_file, logging
 from ...video_processing_utils import BaseVideoProcessor
 from .auto_factory import _LazyAutoMapping
 from .auto_mappings import PROCESSOR_MAPPING_NAMES
@@ -60,7 +53,6 @@ else:
             ("diffusion_gemma", "Gemma4Processor"),
             ("edgetam", "Sam2Processor"),
             ("glm4v_moe", "Glm4vProcessor"),
-            ("gradium_phonon_tts", "PocketTTSProcessor"),
             ("granite_speech5_ctc", "GraniteSpeech5Processor"),
             ("granite_speech_plus", "GraniteSpeechProcessor"),
             ("groupvit", "CLIPProcessor"),
@@ -70,11 +62,9 @@ else:
             ("lasr_encoder", "LasrProcessor"),
             ("metaclip_2", "CLIPProcessor"),
             ("mistral3", "PixtralProcessor"),
-            ("mistral_large4", "PixtralProcessor"),
             ("mm-grounding-dino", "GroundingDinoProcessor"),
             ("modernvbert", "Idefics3Processor"),
             ("moonshine", "Wav2Vec2Processor"),
-            ("nemo_speechlm", "Nemotron3_5TranscribeProcessor"),
             ("parakeet_ctc", "ParakeetProcessor"),
             ("parakeet_rnnt", "ParakeetProcessor"),
             ("parakeet_tdt", "ParakeetProcessor"),
@@ -87,7 +77,6 @@ else:
             ("sew-d", "Wav2Vec2Processor"),
             ("t5gemma2", "Gemma3Processor"),
             ("t5gemma2_encoder", "Gemma3Processor"),
-            ("ultravbert", "Idefics3Processor"),
             ("unispeech", "Wav2Vec2Processor"),
             ("unispeech-sat", "Wav2Vec2Processor"),
             ("vipllava", "LlavaProcessor"),
@@ -207,15 +196,6 @@ class AutoProcessor:
         config = kwargs.pop("config", None)
         trust_remote_code = kwargs.pop("trust_remote_code", None)
         kwargs["_from_auto"] = True
-
-        # Resolve the revision once, so that all the files below come from the same repository state.
-        kwargs["revision"] = resolve_revision(
-            pretrained_model_name_or_path,
-            kwargs.get("revision"),
-            token=kwargs.get("token"),
-            local_files_only=kwargs.get("local_files_only", False),
-            cache_dir=kwargs.get("cache_dir"),
-        )
 
         processor_class = None
         processor_auto_map = None

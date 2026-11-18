@@ -45,8 +45,12 @@ The abstract from the paper is the following:
 ### Inference
 
 ```python
+from io import BytesIO
+from urllib.request import urlopen
+
+import librosa
+
 from transformers import AutoProcessor, Qwen2AudioForConditionalGeneration
-from transformers.audio_utils import load_audio
 
 
 model = Qwen2AudioForConditionalGeneration.from_pretrained("Qwen/Qwen2-Audio-7B", trust_remote_code=True, device_map="auto")
@@ -54,7 +58,7 @@ processor = AutoProcessor.from_pretrained("Qwen/Qwen2-Audio-7B", trust_remote_co
 
 prompt = "<|audio_bos|><|AUDIO|><|audio_eos|>Generate the caption in English:"
 url = "https://huggingface.co/datasets/hf-internal-testing/transformers-synthetic-assets/resolve/main/audio/glass_breaking.mp3"
-audio = load_audio(url, sampling_rate=processor.feature_extractor.sampling_rate)
+audio, sr = librosa.load(BytesIO(urlopen(url).read()), sr=processor.feature_extractor.sampling_rate)
 inputs = processor(text=prompt, audio=audio, return_tensors="pt").to(model.device)
 
 generate_ids = model.generate(**inputs, max_length=256)
@@ -79,8 +83,12 @@ In the following, we demonstrate how to use `Qwen2-Audio-7B-Instruct` for the in
 In the voice chat mode, users can freely engage in voice interactions with Qwen2-Audio without text input:
 
 ```python
+from io import BytesIO
+from urllib.request import urlopen
+
+import librosa
+
 from transformers import AutoProcessor, Qwen2AudioForConditionalGeneration
-from transformers.audio_utils import load_audio
 
 
 processor = AutoProcessor.from_pretrained("Qwen/Qwen2-Audio-7B-Instruct")
@@ -101,7 +109,10 @@ for message in conversation:
     if isinstance(message["content"], list):
         for ele in message["content"]:
             if ele["type"] == "audio":
-                audios.append(load_audio(ele['audio_url'], sampling_rate=processor.feature_extractor.sampling_rate))
+                audios.append(librosa.load(
+                    BytesIO(urlopen(ele['audio_url']).read()),
+                    sr=processor.feature_extractor.sampling_rate)[0]
+                )
 
 inputs = processor(text=text, audio=audios, return_tensors="pt", padding=True).to(model.device)
 inputs.input_ids = inputs.input_ids.to(model.device)
@@ -117,8 +128,12 @@ response = processor.batch_decode(generate_ids, skip_special_tokens=True, clean_
 In the audio analysis, users could provide both audio and text instructions for analysis:
 
 ```python
+from io import BytesIO
+from urllib.request import urlopen
+
+import librosa
+
 from transformers import AutoProcessor, Qwen2AudioForConditionalGeneration
-from transformers.audio_utils import load_audio
 
 
 processor = AutoProcessor.from_pretrained("Qwen/Qwen2-Audio-7B-Instruct")
@@ -146,7 +161,11 @@ for message in conversation:
     if isinstance(message["content"], list):
         for ele in message["content"]:
             if ele["type"] == "audio":
-                audios.append(load_audio(ele['audio_url'], sampling_rate=processor.feature_extractor.sampling_rate))
+                audios.append(
+                    librosa.load(
+                        BytesIO(urlopen(ele['audio_url']).read()),
+                        sr=processor.feature_extractor.sampling_rate)[0]
+                )
 
 inputs = processor(text=text, audio=audios, return_tensors="pt", padding=True).to(model.device)
 inputs.input_ids = inputs.input_ids.to(model.device)
@@ -162,8 +181,12 @@ response = processor.batch_decode(generate_ids, skip_special_tokens=True, clean_
 We also support batch inference:
 
 ```python
+from io import BytesIO
+from urllib.request import urlopen
+
+import librosa
+
 from transformers import AutoProcessor, Qwen2AudioForConditionalGeneration
-from transformers.audio_utils import load_audio
 
 
 processor = AutoProcessor.from_pretrained("Qwen/Qwen2-Audio-7B-Instruct")
@@ -198,7 +221,11 @@ for conversation in conversations:
         if isinstance(message["content"], list):
             for ele in message["content"]:
                 if ele["type"] == "audio":
-                    audios.append(load_audio(ele['audio_url'], sampling_rate=processor.feature_extractor.sampling_rate))
+                    audios.append(
+                        librosa.load(
+                            BytesIO(urlopen(ele['audio_url']).read()),
+                            sr=processor.feature_extractor.sampling_rate)[0]
+                    )
 
 inputs = processor(text=text, audio=audios, return_tensors="pt", padding=True).to(model.device)
 inputs['input_ids'] = inputs['input_ids'].to(model.device)

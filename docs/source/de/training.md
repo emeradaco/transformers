@@ -306,4 +306,7 @@ Genauso wie Sie eine Bewertungsfunktion zu [`Trainer`] hinzugefügt haben, müss
 
 Weitere Beispiele für die Feinabstimmung finden Sie unter:
 
+- [🤗 Transformers Examples](https://github.com/huggingface/transformers/tree/main/examples) enthält Skripte
+  um gängige NLP-Aufgaben in PyTorch und TensorFlow zu trainieren.
+
 - [🤗 Transformers Notebooks](notebooks) enthält verschiedene Notebooks zur Feinabstimmung eines Modells für bestimmte Aufgaben in PyTorch und TensorFlow.

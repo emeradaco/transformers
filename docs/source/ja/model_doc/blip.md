@@ -60,9 +60,9 @@ BLIP は、次のようなさまざまなマルチモーダル タスクを実�
 [[autodoc]] BlipImageProcessor
     - preprocess
 
-## BlipImageProcessorPil
+## BlipImageProcessorFast
 
-[[autodoc]] BlipImageProcessorPil
+[[autodoc]] BlipImageProcessorFast
     - preprocess
 
 

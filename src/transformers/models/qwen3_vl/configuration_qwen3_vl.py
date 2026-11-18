@@ -39,7 +39,7 @@ class Qwen3VLVisionConfig(PreTrainedConfig):
     model_type = "qwen3_vl_vision"
     base_config_key = "vision_config"
     default_rope_type = "axial"
-    attribute_map = {"num_attention_heads": "num_heads", "num_hidden_layers": "depth"}
+    attribute_map = {"num_attention_heads": "num_heads"}
 
     depth: int = 27
     hidden_size: int = 1152
@@ -78,7 +78,6 @@ class Qwen3VLTextConfig(PreTrainedConfig):
 
     model_type = "qwen3_vl_text"
     base_config_key = "text_config"
-    base_model_tp_plan = {"embed_tokens": "embedding_rowwise"}
     default_theta = 500000.0
     ignore_keys_at_rope_validation = {"mrope_section", "mrope_interleaved"}
 
@@ -126,11 +125,8 @@ class Qwen3VLConfig(PreTrainedConfig):
     ```"""
 
     model_type = "qwen3_vl"
-    sub_configs_defaults = {
-        "vision_config": Qwen3VLVisionConfig,
-        "text_config": Qwen3VLTextConfig,
-    }
-    keys_to_ignore_at_inference = ["cache"]
+    sub_configs = {"vision_config": Qwen3VLVisionConfig, "text_config": Qwen3VLTextConfig}
+    keys_to_ignore_at_inference = ["past_key_values"]
 
     text_config: dict | PreTrainedConfig | None = None
     vision_config: dict | PreTrainedConfig | None = None
@@ -141,9 +137,19 @@ class Qwen3VLConfig(PreTrainedConfig):
     tie_word_embeddings: bool = False
 
     def __post_init__(self, **kwargs):
-        if isinstance(self.vision_config, dict) and self.vision_config.get("model_type") == "qwen3_vl":
+        if isinstance(self.vision_config, dict):
             # old ckpt with incorrect model type -> override manually
-            self.vision_config["model_type"] = "qwen3_vl_vision"
+            if self.vision_config.get("model_type") == "qwen3_vl":
+                self.vision_config["model_type"] = "qwen3_vl_vision"
+            self.vision_config = self.sub_configs["vision_config"](**self.vision_config)
+        elif self.vision_config is None:
+            self.vision_config = self.sub_configs["vision_config"]()
+
+        if isinstance(self.text_config, dict):
+            self.text_config = self.sub_configs["text_config"](**self.text_config)
+        elif self.text_config is None:
+            self.text_config = self.sub_configs["text_config"]()
+
         super().__post_init__(**kwargs)
 
 

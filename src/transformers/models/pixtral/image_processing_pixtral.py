@@ -106,7 +106,6 @@ class PixtralImageProcessor(TorchvisionBackend):
     do_resize = True
     do_rescale = True
     do_normalize = True
-    do_pad = True
     do_convert_rgb = True
     valid_kwargs = PixtralImageProcessorKwargs
 
@@ -195,7 +194,6 @@ class PixtralImageProcessor(TorchvisionBackend):
         do_normalize: bool,
         image_mean: float | list[float] | None,
         image_std: float | list[float] | None,
-        do_pad: bool,
         disable_grouping: bool | None,
         return_tensors: str | TensorType | None,
         patch_size: dict[str, int] | SizeDict | None = None,
@@ -227,14 +225,13 @@ class PixtralImageProcessor(TorchvisionBackend):
             processed_images_grouped[key] = stacked_images
 
         processed_images = reorder_images(processed_images_grouped, grouped_images_index)
-        if do_pad:
-            processed_images = self._pad_for_batching(
-                pixel_values=processed_images,
-                image_sizes=batch_image_sizes,
-            )
+        padded_images = self._pad_for_batching(
+            pixel_values=processed_images,
+            image_sizes=batch_image_sizes,
+        )
 
         return BatchFeature(
-            data={"pixel_values": processed_images, "image_sizes": batch_image_sizes}, tensor_type=return_tensors
+            data={"pixel_values": padded_images, "image_sizes": batch_image_sizes}, tensor_type=return_tensors
         )
 
 

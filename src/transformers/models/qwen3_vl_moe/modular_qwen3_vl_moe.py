@@ -22,15 +22,10 @@ from ... import initialization as init
 from ...cache_utils import Cache, DynamicCache
 from ...masking_utils import create_causal_mask
 from ...modeling_flash_attention_utils import FlashAttentionKwargs
-from ...modeling_outputs import (
-    BaseModelOutputWithPooling,
-    MoeCausalLMOutputWithPast,
-    MoeModelOutputWithPast,
-)
-from ...modeling_utils import PreTrainedModel, slice_logits_to_keep
+from ...modeling_outputs import MoeModelOutputWithPast
+from ...modeling_utils import PreTrainedModel
 from ...processing_utils import Unpack
 from ...utils import TransformersKwargs, auto_docstring, logging
-from ...utils.deprecation import deprecate_kwarg
 from ...utils.output_capturing import OutputRecorder
 from ..qwen3_moe.configuration_qwen3_moe import Qwen3MoeConfig
 from ..qwen3_moe.modeling_qwen3_moe import (
@@ -43,7 +38,9 @@ from ..qwen3_moe.modeling_qwen3_moe import (
 )
 from ..qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig, Qwen3VLVisionConfig
 from ..qwen3_vl.modeling_qwen3_vl import (
+    Qwen3VLCausalLMOutputWithPast,
     Qwen3VLForConditionalGeneration,
+    Qwen3VLModelOutputWithPast,
     Qwen3VLTextAttention,
     Qwen3VLTextModel,
     Qwen3VLVisionAttention,
@@ -82,7 +79,7 @@ class Qwen3VLMoeTextConfig(Qwen3MoeConfig):
 
     model_type = "qwen3_vl_moe_text"
     base_config_key = "text_config"
-    keys_to_ignore_at_inference = ["cache"]
+    keys_to_ignore_at_inference = ["past_key_values"]
     default_theta = 500000.0
     # Default tensor parallel plan for base model `Qwen3VLMoe`
     base_model_tp_plan = {
@@ -93,14 +90,12 @@ class Qwen3VLMoeTextConfig(Qwen3MoeConfig):
         "layers.*.mlp.gate_proj": "colwise",
         "layers.*.mlp.up_proj": "colwise",
         "layers.*.mlp.down_proj": "rowwise",
-        "layers.*.mlp.experts.gate_up_proj": "packed_colwise",
-        "layers.*.mlp.experts.down_proj": "rowwise",
-        "layers.*.mlp.experts": "moe_tp_experts",
     }
     base_model_ep_plan = {
+        "layers.*.mlp.gate": "ep_router",
         "layers.*.mlp.experts.gate_up_proj": "grouped_gemm",
         "layers.*.mlp.experts.down_proj": "grouped_gemm",
-        "layers.*.mlp.experts": "ep_dispatch_experts",
+        "layers.*.mlp.experts": "moe_tp_experts",
     }
     base_model_pp_plan = {
         "embed_tokens": (["input_ids"], ["inputs_embeds"]),
@@ -121,6 +116,7 @@ class Qwen3VLMoeTextConfig(Qwen3MoeConfig):
     tie_word_embeddings: bool = True
 
     norm_topk_prob = AttributeError()
+    output_router_logits = AttributeError()
     use_sliding_window = AttributeError()
     sliding_window = AttributeError()
 
@@ -206,6 +202,7 @@ class Qwen3VLMoePreTrainedModel(Qwen3MoePreTrainedModel):
     input_modalities = ("text", "image", "video")
     _no_split_modules = ["Qwen3VLMoeTextDecoderLayer", "Qwen3VLMoeVisionBlock"]
 
+    @torch.no_grad()
     def _init_weights(self, module):
         """Initialize the weights."""
         PreTrainedModel._init_weights(self, module)
@@ -241,14 +238,13 @@ class Qwen3VLMoeVisionModel(Qwen3VLVisionModel):
 
 
 class Qwen3VLMoeTextModel(Qwen3VLTextModel):
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         use_cache: bool | None = None,
         # args for deepstack
         visual_pos_masks: torch.Tensor | None = None,
@@ -267,15 +263,15 @@ class Qwen3VLMoeTextModel(Qwen3VLTextModel):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
         # torch.jit.trace() doesn't support cache objects in the output
-        if use_cache and cache is None and not torch.jit.is_tracing():
-            cache = DynamicCache(config=self.config)
+        if use_cache and past_key_values is None and not torch.jit.is_tracing():
+            past_key_values = DynamicCache(config=self.config)
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
         # the hard coded `4` is for text, temporal, height and width.
         if position_ids is None:
-            past_seen_tokens = cache.get_seq_length() if cache is not None else 0
+            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             position_ids = torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device) + past_seen_tokens
             position_ids = position_ids.view(1, 1, -1).expand(4, inputs_embeds.shape[0], -1)
         elif position_ids.ndim == 2:
@@ -291,7 +287,7 @@ class Qwen3VLMoeTextModel(Qwen3VLTextModel):
             config=self.config,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
-            cache=cache,
+            past_key_values=past_key_values,
             position_ids=text_position_ids,
         )
 
@@ -306,7 +302,7 @@ class Qwen3VLMoeTextModel(Qwen3VLTextModel):
                 hidden_states,
                 attention_mask=attention_mask,
                 position_ids=text_position_ids,
-                cache=cache,
+                past_key_values=past_key_values,
                 position_embeddings=position_embeddings,
                 **kwargs,
             )
@@ -324,36 +320,42 @@ class Qwen3VLMoeTextModel(Qwen3VLTextModel):
 
         return MoeModelOutputWithPast(  # only diff with Qwen3VLTextModel
             last_hidden_state=hidden_states,
-            cache=cache,
+            past_key_values=past_key_values,
         )
 
 
+class Qwen3VLMoeModelOutputWithPast(Qwen3VLModelOutputWithPast):
+    router_logits: tuple[torch.FloatTensor] | None = None
+
+
+class Qwen3VLMoeCausalLMOutputWithPast(Qwen3VLCausalLMOutputWithPast):
+    router_logits: tuple[torch.FloatTensor] | None = None
+    aux_loss: torch.FloatTensor | None = None
+
+
 class Qwen3VLMoeForConditionalGeneration(Qwen3VLForConditionalGeneration):
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         pixel_values: torch.Tensor | None = None,
-        pixel_values_videos: torch.Tensor | None = None,
+        pixel_values_videos: torch.FloatTensor | None = None,
         image_grid_thw: torch.LongTensor | None = None,
         video_grid_thw: torch.LongTensor | None = None,
         mm_token_type_ids: torch.IntTensor | None = None,
-        output_router_logits: bool | None = None,
         logits_to_keep: int | torch.Tensor = 0,
-        mm_encoder_outputs: dict[str, BaseModelOutputWithPooling] | None = None,
         **kwargs: Unpack[TransformersKwargs],
-    ) -> tuple | MoeCausalLMOutputWithPast:
+    ) -> tuple | Qwen3VLMoeCausalLMOutputWithPast:
         r"""
         Example:
 
         ```python
         >>> from PIL import Image
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
         >>> from transformers import AutoProcessor, Qwen3VLMoeForConditionalGeneration
 
@@ -392,10 +394,6 @@ class Qwen3VLMoeForConditionalGeneration(Qwen3VLForConditionalGeneration):
         "A woman in a plaid shirt sits on a sandy beach at sunset, smiling as she gives a high-five to a yellow Labrador Retriever wearing a harness. The ocean waves roll in the background."
         ```"""
 
-        output_router_logits = (
-            output_router_logits if output_router_logits is not None else self.config.text_config.output_router_logits
-        )
-
         outputs = self.model(
             input_ids=input_ids,
             pixel_values=pixel_values,
@@ -405,17 +403,16 @@ class Qwen3VLMoeForConditionalGeneration(Qwen3VLForConditionalGeneration):
             mm_token_type_ids=mm_token_type_ids,
             position_ids=position_ids,
             attention_mask=attention_mask,
-            cache=cache,
+            past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
-            mm_encoder_outputs=mm_encoder_outputs,
-            output_router_logits=output_router_logits,
             **kwargs,
         )
 
         hidden_states = outputs[0]
 
-        hidden_states = slice_logits_to_keep(hidden_states, logits_to_keep)
-        logits = self.lm_head(hidden_states)
+        # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
+        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+        logits = self.lm_head(hidden_states[:, slice_indices, :])
 
         loss = None
         if labels is not None:
@@ -424,7 +421,7 @@ class Qwen3VLMoeForConditionalGeneration(Qwen3VLForConditionalGeneration):
             )
 
         aux_loss = None
-        if output_router_logits:
+        if kwargs.get("output_router_logits", False):
             aux_loss = load_balancing_loss_func(
                 outputs.router_logits,
                 self.config.text_config.num_experts,
@@ -436,13 +433,14 @@ class Qwen3VLMoeForConditionalGeneration(Qwen3VLForConditionalGeneration):
                     loss.device
                 )  # make sure to reside in the same device
 
-        return MoeCausalLMOutputWithPast(
+        return Qwen3VLMoeCausalLMOutputWithPast(
             loss=loss,
             aux_loss=aux_loss,
             logits=logits,
-            cache=outputs.cache,
+            past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
+            rope_deltas=outputs.rope_deltas,
             router_logits=outputs.router_logits,
         )
 

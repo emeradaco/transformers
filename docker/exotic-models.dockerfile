@@ -1,7 +1,11 @@
-FROM ci-base
+FROM python:3.10-slim
+ENV PYTHONDONTWRITEBYTECODE=1
 ARG REF=main
+USER root
 RUN apt-get update && apt-get install -y libsndfile1-dev espeak-ng time git libgl1 g++ tesseract-ocr git-lfs curl
-RUN uv pip install --no-cache-dir 'torch<=2.15.0' 'torchaudio' 'torchvision' --index-url https://download.pytorch.org/whl/cpu
+ENV UV_PYTHON=/usr/local/bin/python
+RUN pip --no-cache-dir install uv && uv pip install --no-cache-dir -U pip setuptools
+RUN uv pip install --no-cache-dir 'torch<=2.14.0' 'torchaudio' 'torchvision' --index-url https://download.pytorch.org/whl/cpu
 RUN uv pip install --no-cache-dir  --no-deps timm accelerate
 RUN uv pip install -U --no-cache-dir pytesseract python-Levenshtein opencv-python nltk
 # RUN uv pip install --no-cache-dir natten==0.15.1+torch210cpu -f https://shi-labs.com/natten/wheels

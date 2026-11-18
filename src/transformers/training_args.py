@@ -297,22 +297,18 @@ class TrainingArguments:
             negligible accuracy loss. Default depends on PyTorch version. See
             [TF32 docs](https://huggingface.co/docs/transformers/perf_train_gpu_one#tf32).
 
-        > Activation Checkpointing
+        > Gradient Checkpointing
 
-        activation_checkpointing (`bool`, *optional*, defaults to `False`):
-            Enable activation checkpointing to trade compute for memory. Reduces memory usage by
+        gradient_checkpointing (`bool`, *optional*, defaults to `False`):
+            Enable gradient checkpointing to trade compute for memory. Reduces memory usage by
             clearing activations during forward pass and recomputing them during backward pass.
             Enables training larger models or batch sizes at the cost of ~20% slower training.
-        activation_checkpointing_kwargs (`dict`, *optional*, defaults to `None`):
-            Keyword arguments passed to `activation_checkpointing_enable()`. `every_n_layers` checkpoints only every
+        gradient_checkpointing_kwargs (`dict`, *optional*, defaults to `None`):
+            Keyword arguments passed to `gradient_checkpointing_enable()`. `every_n_layers` checkpoints only every
             n-th decoder layer instead of all of them; `1` is the usual all-or-nothing behavior, and larger values
             give some memory back to speed. `offload` holds the saved activations in pinned host memory, which
             frees `layers x sequence x hidden` bytes of device memory and makes the step slower. Any other key is
             forwarded to `torch.utils.checkpoint.checkpoint`.
-        gradient_checkpointing (`bool`, *optional*):
-            Deprecated alias of `activation_checkpointing`, will be removed in v6.
-        gradient_checkpointing_kwargs (`dict`, *optional*):
-            Deprecated alias of `activation_checkpointing_kwargs`, will be removed in v6.
 
         > Compilation
 
@@ -343,7 +339,7 @@ class TrainingArguments:
         > Additional Optimizations
 
         use_cache (`bool`, *optional*, defaults to `False`):
-            Whether or not to enable cache for the model. For training, this is usually not needed apart from some PEFT methods that uses `cache`.
+            Whether or not to enable cache for the model. For training, this is usually not needed apart from some PEFT methods that uses `past_key_values`.
         neftune_noise_alpha (`Optional[float]`):
             If not `None`, this will activate NEFTune noise embeddings. This can drastically improve model performance
             for instruction fine-tuning. Check out the [original paper](https://huggingface.co/papers/2310.05914) and the
@@ -353,8 +349,8 @@ class TrainingArguments:
             Number of steps to wait before calling `torch.<device>.empty_cache()`. If left unset or set to None, cache will not be emptied.
             This can help avoid CUDA out-of-memory errors by lowering peak VRAM usage at a cost of about [10% slower performance](https://github.com/huggingface/transformers/issues/31372).
         auto_find_batch_size (`bool`, *optional*, defaults to `False`)
-            Whether to find a training batch size that will fit into memory automatically through exponential decay,
-            avoiding CUDA Out-of-Memory errors. The evaluation batch size is not adjusted.
+            Whether to find a batch size that will fit into memory automatically through exponential decay, avoiding
+            CUDA Out-of-Memory errors.
 
         > Logging & Monitoring Training
 
@@ -372,9 +368,8 @@ class TrainingArguments:
             In multinode distributed training, whether to log using `log_level` once per node, or only on the main
             node.
         logging_nan_inf_filter (`bool`, *optional*, defaults to `True`):
-            Filter out NaN and Inf losses when logging. If `True`, replaces NaN/Inf training losses with the
-            average of recent valid losses, and leaves NaN/Inf batches (e.g. batches without label tokens) out of the
-            evaluation loss. Does not affect gradient computation, only logging.
+             Filter out NaN and Inf losses when logging. If `True`, replaces NaN/Inf losses with the
+            average of recent valid losses. Does not affect gradient computation, only logging.
         include_num_input_tokens_seen (`Optional[Union[str, bool]]`, *optional*, defaults to "no"):
             Whether to track the number of input tokens seen. Must be one of ["all", "non_padding", "no"] or a boolean value which map to "all" or "no".
             May be slower in distributed training as gather operations must be called.
@@ -690,9 +685,9 @@ class TrainingArguments:
                 - cpu_offload (`bool`, *optional*, defaults to `False`):
                     Offload parameters and gradients to CPU when not in use to save GPU memory.
                 - activation_checkpointing (`bool`, *optional*, defaults to `False`):
-                    Set to `True` to reduce memory by recomputing activations during the backward pass. When using
-                    FSDP, prefer this over the `activation_checkpointing` training argument, which introduces a
-                    redundant all-gather in the backward pass.
+                    Set to `True` to reduce memory by recomputing activations during the backward pass. Prefer
+                    `activation_checkpointing` over `gradient_checkpointing` when using FSDP. `gradient_checkpointing`
+                    introduces a redundant all-gather in the backward pass.
                 - cpu_ram_efficient_loading (`bool`, *optional*, defaults to `False`):
                     Set to `True` to load the pretrained checkpoint on the first process only. Other processes start
                     with empty weights and receive the weights by broadcast.
@@ -743,17 +738,21 @@ class TrainingArguments:
 
         do_train (`bool`, *optional*, defaults to `False`):
             Whether to run training or not. This argument is not directly used by [`Trainer`], it's intended to be used
-            by your training/evaluation scripts instead.
+            by your training/evaluation scripts instead. See the [example
+            scripts](https://github.com/huggingface/transformers/tree/main/examples) for more details.
         do_eval (`bool`, *optional*):
             Whether to run evaluation on the validation set or not. Will be set to `True` if `eval_strategy` is
             different from `"no"`. This argument is not directly used by [`Trainer`], it's intended to be used by your
-            training/evaluation scripts instead.
+            training/evaluation scripts instead. See the [example
+            scripts](https://github.com/huggingface/transformers/tree/main/examples) for more details.
         do_predict (`bool`, *optional*, defaults to `False`):
             Whether to run predictions on the test set or not. This argument is not directly used by [`Trainer`], it's
-            intended to be used by your training/evaluation scripts instead.
+            intended to be used by your training/evaluation scripts instead. See the [example
+            scripts](https://github.com/huggingface/transformers/tree/main/examples) for more details.
         resume_from_checkpoint (`str`, *optional*):
             The path to a folder with a valid checkpoint for your model. This argument is not directly used by
-            [`Trainer`], it's intended to be used by your training/evaluation scripts instead.
+            [`Trainer`], it's intended to be used by your training/evaluation scripts instead. See the [example
+            scripts](https://github.com/huggingface/transformers/tree/main/examples) for more details.
     """
 
     # Fields that accept dict values via CLI as JSON strings (e.g., '{"key": "value"}').
@@ -762,7 +761,6 @@ class TrainingArguments:
         "accelerator_config",
         "fsdp_config",
         "deepspeed",
-        "activation_checkpointing_kwargs",
         "gradient_checkpointing_kwargs",
         "lr_scheduler_kwargs",
     ]
@@ -902,38 +900,22 @@ class TrainingArguments:
         },
     )
 
-    # --- Activation Checkpointing ---
-    # `bool | None` so a copy of the args can tell an unset value from `False`, and `nargs="?"` / `const=True` so a bare
-    # `--activation_checkpointing` means True
-    activation_checkpointing: bool | None = field(
-        default=None,
+    # --- Gradient Checkpointing ---
+    gradient_checkpointing: bool = field(
+        default=False,
         metadata={
-            "help": "Enable activation checkpointing to trade compute for memory. Reduces memory at the cost of ~20%% slower training.",
-            "nargs": "?",
-            "const": True,
+            "help": "Enable gradient checkpointing to trade compute for memory. Reduces memory at the cost of ~20%% slower training."
         },
     )
-    activation_checkpointing_kwargs: dict[str, Any] | str | None = field(
+    gradient_checkpointing_kwargs: dict[str, Any] | str | None = field(
         default=None,
         metadata={
-            "help": "Keyword arguments passed to `activation_checkpointing_enable()`. `every_n_layers` checkpoints "
+            "help": "Keyword arguments passed to `gradient_checkpointing_enable()`. `every_n_layers` checkpoints "
             "only every n-th decoder layer instead of all of them; `1` is the usual all-or-nothing behavior, and "
             "larger values give some memory back to speed. `offload` holds the saved activations in pinned host "
             "memory, which frees device memory and makes the step slower. Any other key is forwarded to "
             "`torch.utils.checkpoint.checkpoint`."
         },
-    )
-    gradient_checkpointing: bool | None = field(
-        default=None,
-        metadata={
-            "help": "Deprecated alias of `activation_checkpointing`, will be removed in v6.",
-            "nargs": "?",
-            "const": True,
-        },
-    )
-    gradient_checkpointing_kwargs: dict[str, Any] | str | None = field(
-        default=None,
-        metadata={"help": "Deprecated alias of `activation_checkpointing_kwargs`, will be removed in v6."},
     )
 
     # --- Compilation ---
@@ -971,7 +953,7 @@ class TrainingArguments:
     use_cache: bool = field(
         default=False,
         metadata={
-            "help": "Whether or not to use cache for the model For training, this is usually not needed apart from some PEFT methods that uses `cache`."
+            "help": "Whether or not to use cache for the model For training, this is usually not needed apart from some PEFT methods that uses `past_key_values`."
         },
     )
     neftune_noise_alpha: float | None = field(
@@ -989,7 +971,7 @@ class TrainingArguments:
     auto_find_batch_size: bool = field(
         default=False,
         metadata={
-            "help": "Whether to find a training batch size that will fit into memory automatically through exponential decay, avoiding CUDA Out-of-Memory errors. The evaluation batch size is not adjusted."
+            "help": "Whether to find a batch size that will fit into memory automatically through exponential decay, avoiding CUDA Out-of-Memory errors."
         },
     )
 
@@ -1022,7 +1004,7 @@ class TrainingArguments:
     logging_nan_inf_filter: bool = field(
         default=True,
         metadata={
-            "help": "Filter out NaN and Inf training and evaluation losses when logging. Does not affect gradient computation, only logging."
+            "help": "Filter out NaN and Inf losses when logging. Does not affect gradient computation, only logging."
         },
     )
     include_num_input_tokens_seen: str | bool = field(
@@ -1530,20 +1512,6 @@ class TrainingArguments:
                 loaded_dict = _convert_str_dict(loaded_dict)
                 setattr(self, valid_field, loaded_dict)
 
-        # `gradient_checkpointing*` are deprecated aliases of `activation_checkpointing*`, used only when the new name is
-        # not set. Once resolved, the old names mirror the new ones, so code that reads them keeps working, and a copy
-        # of the args (`dataclasses.replace`, a `to_dict()` rebuild) that changes the new name takes effect silently.
-        for old, new in (
-            ("gradient_checkpointing", "activation_checkpointing"),
-            ("gradient_checkpointing_kwargs", "activation_checkpointing_kwargs"),
-        ):
-            if getattr(self, new) is None and getattr(self, old) is not None:
-                warnings.warn(f"`{old}` is deprecated and will be removed in v6. Use `{new}` instead.", FutureWarning)
-                setattr(self, new, getattr(self, old))
-            setattr(self, old, getattr(self, new))
-        if self.activation_checkpointing is None:
-            self.activation_checkpointing = self.gradient_checkpointing = False
-
         # Expand ~ in paths so os.makedirs works correctly (#10628)
         if self.output_dir is not None:
             self.output_dir = os.path.expanduser(self.output_dir)
@@ -1798,7 +1766,7 @@ class TrainingArguments:
                 raise ValueError("lr_scheduler_type greedy requires an eval strategy")
 
         if self.warmup_steps < 0:
-            raise ValueError(f"Got warmup_steps = {self.warmup_steps}, Expected value warmup_steps >= 0")
+            raise ValueError("warmup_steps must be an integer or a float")
 
         if self.dataloader_num_workers == 0 and self.dataloader_prefetch_factor is not None:
             raise ValueError(
@@ -1939,7 +1907,7 @@ class TrainingArguments:
                 torch.neuron.set_device(device)
             elif is_torch_tpu_available():
                 device = torch.device("tpu:0")
-                torch.accelerator.set_device_index(device)
+                torch.tpu.set_device(device)
             else:
                 # Default to cuda:0 (respects CUDA_VISIBLE_DEVICES); nn.DataParallel handles n_gpu > 1
                 device = torch.device(
@@ -2231,8 +2199,7 @@ class TrainingArguments:
         max_steps: int = -1,
         gradient_accumulation_steps: int = 1,
         seed: int = 42,
-        activation_checkpointing: bool = False,
-        gradient_checkpointing: bool | None = None,
+        gradient_checkpointing: bool = False,
     ):
         """
         A method that regroups all basic arguments linked to the training.
@@ -2251,7 +2218,7 @@ class TrainingArguments:
             weight_decay (`float`, *optional*, defaults to 0):
                 The weight decay to apply (if not zero) to all layers except all bias and LayerNorm weights in the
                 optimizer.
-            num_epochs (`float`, *optional*, defaults to 3.0):
+            num_train_epochs(`float`, *optional*, defaults to 3.0):
                 Total number of training epochs to perform (if not an integer, will perform the decimal part percents
                 of the last epoch before stopping training).
             max_steps (`int`, *optional*, defaults to -1):
@@ -2275,10 +2242,8 @@ class TrainingArguments:
                 Random seed that will be set at the beginning of training. To ensure reproducibility across runs, use
                 the [`~Trainer.model_init`] function to instantiate the model if it has some randomly initialized
                 parameters.
-            activation_checkpointing (`bool`, *optional*, defaults to `False`):
-                If True, use activation checkpointing to save memory at the expense of slower backward pass.
-            gradient_checkpointing (`bool`, *optional*):
-                Deprecated alias of `activation_checkpointing`, will be removed in v6.
+            gradient_checkpointing (`bool`, *optional*, defaults to `False`):
+                If True, use gradient checkpointing to save memory at the expense of slower backward pass.
 
         Example:
 
@@ -2299,13 +2264,7 @@ class TrainingArguments:
         self.max_steps = max_steps
         self.gradient_accumulation_steps = gradient_accumulation_steps
         self.seed = seed
-        if gradient_checkpointing is not None:
-            warnings.warn(
-                "`gradient_checkpointing` is deprecated and will be removed in v6. Use `activation_checkpointing` instead.",
-                FutureWarning,
-            )
-            activation_checkpointing = gradient_checkpointing
-        self.activation_checkpointing = self.gradient_checkpointing = activation_checkpointing
+        self.gradient_checkpointing = gradient_checkpointing
         return self
 
     def set_evaluate(
@@ -2792,11 +2751,10 @@ class TrainingArguments:
             self._apply_legacy_fsdp_to_config(self.fsdp, self.fsdp_config)
         self.fsdp = True
 
-        if self.activation_checkpointing:
+        if self.gradient_checkpointing:
             logger.warning(
-                "When using FSDP, prefer `fsdp_config['activation_checkpointing']` (FSDP's own activation "
-                "checkpointing) over the `activation_checkpointing` training argument; the latter introduces a "
-                "redundant AllGather in the backward pass. "
+                "When using FSDP, prefer `activation_checkpointing` in `fsdp_config` over "
+                "`gradient_checkpointing`; the latter introduces a redundant AllGather in the backward pass. "
                 "Reference: https://github.com/huggingface/transformers/issues/30404"
             )
 

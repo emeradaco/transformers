@@ -17,7 +17,6 @@ import torch
 import torch.nn as nn
 from huggingface_hub.dataclasses import strict
 
-from ... import initialization as init
 from ...activations import ACT2FN
 from ...configuration_utils import PreTrainedConfig
 from ...modeling_utils import PreTrainedModel
@@ -234,11 +233,12 @@ class PPLCNetV3DepthwiseSeparableConvLayer(PPLCNetDepthwiseSeparableConvLayer):
 
 
 class PPLCNetV3PreTrainedModel(PPLCNetPreTrainedModel):
+    @torch.no_grad()
     def _init_weights(self, module):
         PreTrainedModel._init_weights(module)
         if isinstance(module, (PPLCNetV3LearnableAffineBlock)):
-            init.ones_(module.scale)
-            init.zeros_(module.bias)
+            nn.init.ones_(module.scale)
+            nn.init.zeros_(module.bias)
 
 
 class PPLCNetV3Backbone(PPLCNetBackbone):

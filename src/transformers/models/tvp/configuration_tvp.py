@@ -15,7 +15,8 @@
 
 from huggingface_hub.dataclasses import strict
 
-from ...configuration_utils import PreTrainedConfig, SubConfigSpec
+from ...backbone_utils import consolidate_backbone_kwargs_to_config
+from ...configuration_utils import PreTrainedConfig
 from ...utils import auto_docstring
 from ..auto import AutoConfig
 
@@ -50,13 +51,7 @@ class TvpConfig(PreTrainedConfig):
     """
 
     model_type = "tvp"
-    sub_configs_defaults = {
-        "backbone_config": SubConfigSpec(
-            config_class=AutoConfig,
-            model_type="resnet",
-            init_kwargs={"out_features": ["stage4"]},
-        ),
-    }
+    sub_configs = {"backbone_config": AutoConfig}
 
     backbone_config: dict | PreTrainedConfig | None = None
     distance_loss_weight: float = 1.0
@@ -81,6 +76,16 @@ class TvpConfig(PreTrainedConfig):
     initializer_range: float = 0.02
     attention_probs_dropout_prob: float | int = 0.1
     pad_token_id: int | None = None
+
+    def __post_init__(self, **kwargs):
+        self.backbone_config, kwargs = consolidate_backbone_kwargs_to_config(
+            backbone_config=self.backbone_config,
+            default_config_type="resnet",
+            default_config_kwargs={"out_features": ["stage4"]},
+            **kwargs,
+        )
+
+        super().__post_init__(**kwargs)
 
 
 __all__ = ["TvpConfig"]

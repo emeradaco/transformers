@@ -22,10 +22,8 @@ from ...activations import ACT2FN
 from ...cache_utils import Cache
 from ...masking_utils import create_bidirectional_mask
 from ...modeling_outputs import BaseModelOutputWithPooling, ModelOutput
-from ...modeling_utils import slice_logits_to_keep
 from ...processing_utils import Unpack
 from ...utils import TransformersKwargs, auto_docstring, can_return_tuple, logging
-from ...utils.deprecation import deprecate_kwarg
 from ...utils.generic import merge_with_config_defaults
 from ...utils.output_capturing import capture_outputs
 from ..qwen2_audio.modeling_qwen2_audio import (
@@ -70,22 +68,22 @@ class AudioFlamingo3ModelOutputWithPast(VoxtralModelOutputWithPast):
 @dataclass
 class AudioFlamingo3CausalLMOutputWithPast(ModelOutput):
     r"""
-    loss (`torch.Tensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
+    loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
         Language modeling loss (for next-token prediction).
-    logits (`torch.Tensor` of shape `(batch_size, sequence_length, config.vocab_size)`):
+    logits (`torch.FloatTensor` of shape `(batch_size, sequence_length, config.vocab_size)`):
         Prediction scores of the language modeling head.
-    cache (`Cache`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
+    past_key_values (`Cache`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
         It is a [`~cache_utils.Cache`] instance.
-    audio_hidden_states (`torch.Tensor`, *optional*):
+    audio_hidden_states (`torch.FloatTensor`, *optional*):
         Hidden states of the audio encoder after projection.
     """
 
-    loss: torch.Tensor | None = None
-    logits: torch.Tensor | None = None
-    cache: Cache | None = None
-    hidden_states: tuple[torch.Tensor] | None = None
-    attentions: tuple[torch.Tensor] | None = None
-    audio_hidden_states: torch.Tensor | None = None
+    loss: torch.FloatTensor | None = None
+    logits: torch.FloatTensor | None = None
+    past_key_values: Cache | None = None
+    hidden_states: tuple[torch.FloatTensor] | None = None
+    attentions: tuple[torch.FloatTensor] | None = None
+    audio_hidden_states: torch.FloatTensor | None = None
 
 
 @auto_docstring(
@@ -113,10 +111,10 @@ class AudioFlamingo3Encoder(Qwen2AudioEncoder):
     ) -> tuple | BaseModelOutputWithPooling:
         r"""
         Args:
-            input_features (`torch.Tensor` of shape `(batch_size, feature_size, sequence_length)`):
+            input_features (`torch.FloatTensor` of shape `(batch_size, feature_size, sequence_length)`):
                 Log-Mel features extracted from raw audio. Use the processor/feature extractor to compute and pad
                 these features from waveform input.
-            input_features_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
+            input_features_mask (`torch.FloatTensor` of shape `(batch_size, sequence_length)`, *optional*):
                 Mask to avoid performing attention on padding feature indices. Mask values selected in `[0, 1]`:
 
                 - 1 for tokens that are **not masked**,
@@ -145,11 +143,7 @@ class AudioFlamingo3Encoder(Qwen2AudioEncoder):
 
         # Transformer stack
         for layer in self.layers:
-            drop = False
-            if self.training and self.layerdrop > 0.0:
-                dropout_probability = torch.rand([])
-                if dropout_probability < self.layerdrop:
-                    drop = True
+            drop = self.training and torch.rand([]) < self.layerdrop
             if not drop:
                 hidden_states = layer(hidden_states, attention_mask)
 
@@ -191,7 +185,7 @@ class AudioFlamingo3Model(VoxtralModel):
     _pp_plan = None
     _keep_in_fp32_modules_strict = None
 
-    def __init__(self, config: AudioFlamingo3Config):
+    def __init__(self, config):
         super().__init__(config)
 
     @can_return_tuple
@@ -200,12 +194,12 @@ class AudioFlamingo3Model(VoxtralModel):
     )
     def get_audio_features(
         self,
-        input_features: torch.Tensor,
+        input_features: torch.FloatTensor,
         input_features_mask: torch.Tensor,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple | BaseModelOutputWithPooling:
         r"""
-        input_features (`torch.Tensor`):
+        input_features (`torch.FloatTensor`):
             Float values of mel features extracted from the raw speech waveform.
         input_features_mask (`torch.Tensor` of shape `(batch_size, feature_sequence_length)`):
             Mask to avoid performing attention on padded feature indices.
@@ -226,16 +220,15 @@ class AudioFlamingo3Model(VoxtralModel):
 
     @can_return_tuple
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        input_features: torch.Tensor | None = None,
+        input_features: torch.FloatTensor | None = None,
         input_features_mask: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         use_cache: bool | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ):
@@ -262,14 +255,14 @@ class AudioFlamingo3Model(VoxtralModel):
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             use_cache=use_cache,
             **kwargs,
         )
 
         return AudioFlamingo3ModelOutputWithPast(
             last_hidden_state=outputs.last_hidden_state,
-            cache=outputs.cache,
+            past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
             audio_hidden_states=audio_embeds,
@@ -285,7 +278,7 @@ class AudioFlamingo3ForConditionalGeneration(VoxtralForConditionalGeneration):
     _keep_in_fp32_modules_strict = AttributeError()
     _tied_weights_keys = None
 
-    def __init__(self, config: AudioFlamingo3Config):
+    def __init__(self, config):
         super().__init__(config)
         self.model = AudioFlamingo3Model(config)
         self.post_init()
@@ -295,16 +288,15 @@ class AudioFlamingo3ForConditionalGeneration(VoxtralForConditionalGeneration):
 
     @can_return_tuple
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        input_features: torch.Tensor | None = None,
+        input_features: torch.FloatTensor | None = None,
         input_features_mask: torch.Tensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
         logits_to_keep: int | torch.Tensor = 0,
@@ -331,15 +323,15 @@ class AudioFlamingo3ForConditionalGeneration(VoxtralForConditionalGeneration):
             input_features_mask=input_features_mask,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             **kwargs,
         )
 
         hidden_states = outputs.last_hidden_state
-        hidden_states = slice_logits_to_keep(hidden_states, logits_to_keep)
-        logits = self.lm_head(hidden_states)
+        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+        logits = self.lm_head(hidden_states[:, slice_indices, :])
 
         loss = None
         if labels is not None:
@@ -350,7 +342,7 @@ class AudioFlamingo3ForConditionalGeneration(VoxtralForConditionalGeneration):
         return AudioFlamingo3CausalLMOutputWithPast(
             loss=loss,
             logits=logits,
-            cache=outputs.cache,
+            past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
             audio_hidden_states=outputs.audio_hidden_states,

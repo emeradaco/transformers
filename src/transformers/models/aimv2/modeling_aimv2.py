@@ -46,17 +46,17 @@ from .configuration_aimv2 import Aimv2Config, Aimv2TextConfig, Aimv2VisionConfig
 @dataclass
 class Aimv2Output(ModelOutput):
     r"""
-    loss (`torch.Tensor` of shape `(1,)`, *optional*, returned when `return_loss` is `True`):
+    loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `return_loss` is `True`):
         Contrastive loss for image-text similarity.
-    logits_per_image (`torch.Tensor` of shape `(image_batch_size, text_batch_size)`):
+    logits_per_image (`torch.FloatTensor` of shape `(image_batch_size, text_batch_size)`):
         The scaled dot product scores between `image_embeds` and `text_embeds`. This represents the image-text
         similarity scores.
-    logits_per_text (`torch.Tensor` of shape `(text_batch_size, image_batch_size)`):
+    logits_per_text (`torch.FloatTensor` of shape `(text_batch_size, image_batch_size)`):
         The scaled dot product scores between `text_embeds` and `image_embeds`. This represents the text-image
         similarity scores.
-    text_embeds (`torch.Tensor` of shape `(batch_size, output_dim`):
+    text_embeds (`torch.FloatTensor` of shape `(batch_size, output_dim`):
         The text embeddings obtained by applying the projection layer to the pooled output of [`Aimv2TextModel`].
-    image_embeds (`torch.Tensor` of shape `(batch_size, output_dim`):
+    image_embeds (`torch.FloatTensor` of shape `(batch_size, output_dim`):
         The image embeddings obtained by applying the projection layer to the pooled output of [`Aimv2VisionModel`].
     text_model_output (`BaseModelOutputWithPooling`):
         The output of the [`Aimv2TextModel`].
@@ -64,11 +64,11 @@ class Aimv2Output(ModelOutput):
         The output of the [`Aimv2VisionModel`].
     """
 
-    loss: torch.Tensor | None = None
-    logits_per_image: torch.Tensor | None = None
-    logits_per_text: torch.Tensor | None = None
-    text_embeds: torch.Tensor | None = None
-    image_embeds: torch.Tensor | None = None
+    loss: torch.FloatTensor | None = None
+    logits_per_image: torch.FloatTensor | None = None
+    logits_per_text: torch.FloatTensor | None = None
+    text_embeds: torch.FloatTensor | None = None
+    image_embeds: torch.FloatTensor | None = None
     text_model_output: BaseModelOutputWithPooling = None
     vision_model_output: BaseModelOutputWithPooling = None
 
@@ -218,7 +218,7 @@ class Aimv2TextEmbeddings(nn.Module):
         self,
         input_ids: torch.LongTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
     ) -> torch.Tensor:
         seq_length = input_ids.shape[-1] if input_ids is not None else inputs_embeds.shape[-2]
         max_position_embedding = self.position_embedding.weight.shape[0]
@@ -436,6 +436,7 @@ class Aimv2PreTrainedModel(PreTrainedModel):
     _supports_flash_attn = True
     _supports_flex_attn = True
 
+    @torch.no_grad()
     def _init_weights(self, module):
         super()._init_weights(module)
         if hasattr(module, "logit_scale"):
@@ -492,7 +493,7 @@ class Aimv2VisionModel(Aimv2PreTrainedModel):
 
         ```python
         >>> from PIL import Image
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
         >>> from transformers import AutoProcessor, Siglip2VisionModel
 
@@ -534,7 +535,7 @@ class Aimv2VisionModel(Aimv2PreTrainedModel):
 )
 class Aimv2TextModel(Aimv2PreTrainedModel):
     main_input_name = "input_ids"
-    config: Aimv2TextConfig
+
     _can_record_outputs = {
         "hidden_states": Aimv2EncoderLayer,
         "attentions": Aimv2Attention,
@@ -577,7 +578,7 @@ class Aimv2TextModel(Aimv2PreTrainedModel):
                 inputs_embeds=hidden_states,
                 position_ids=position_ids,
                 attention_mask=attention_mask,
-                cache=None,
+                past_key_values=None,
             )
 
         encoder_outputs = self.encoder(
@@ -674,7 +675,7 @@ class Aimv2Model(Aimv2PreTrainedModel):
     @auto_docstring
     def get_image_features(
         self,
-        pixel_values: torch.Tensor,
+        pixel_values: torch.FloatTensor,
         interpolate_pos_encoding: bool = False,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple | BaseModelOutputWithPooling:
@@ -713,7 +714,7 @@ class Aimv2Model(Aimv2PreTrainedModel):
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        pixel_values: torch.Tensor | None = None,
+        pixel_values: torch.FloatTensor | None = None,
         attention_mask: torch.Tensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> Aimv2Output:
@@ -722,7 +723,7 @@ class Aimv2Model(Aimv2PreTrainedModel):
 
         ```python
         >>> from PIL import Image
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
         >>> from transformers import AutoProcessor, Aimv2Model
 

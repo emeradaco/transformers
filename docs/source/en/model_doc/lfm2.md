@@ -68,10 +68,6 @@ output = model.generate(
 print(tokenizer.decode(output[0], skip_special_tokens=False))
 ```
 
-## Notes
-
-- Use left padding for batched generation. See [Padding side](../llm_tutorial#padding-side).
-
 ## Lfm2Config
 
 [[autodoc]] Lfm2Config

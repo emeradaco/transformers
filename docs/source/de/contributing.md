@@ -242,7 +242,7 @@ Um mehr über die Prüfungen zu erfahren, die bei einer Pull-Anfrage ausgelöst 
 
 ### Tests
 
-Eine umfangreiche Test-Suite ist enthalten, um das Verhalten der Bibliothek zu testen. Tests für die Bibliothek finden Sie im [tests](https://github.com/huggingface/transformers/tree/main/tests) Ordner.
+Eine umfangreiche Test-Suite ist enthalten, um das Verhalten der Bibliothek und mehrerer Beispiele zu testen. Tests für die Bibliothek und Beispiele finden Sie jeweils im [tests](https://github.com/huggingface/transformers/tree/main/tests) und im [examples](https://github.com/huggingface/transformers/tree/main/examples) Ordner.
 
 Wir bevorzugen `pytest` und `pytest-xdist`, weil es schneller ist. Geben Sie einen *Pfad zu einem Unterordner oder einer Testdatei* vom Hauptverzeichnis des Repositorys aus an, um den Test auszuführen:
 
@@ -250,7 +250,14 @@ Wir bevorzugen `pytest` und `pytest-xdist`, weil es schneller ist. Geben Sie ein
 python -m pytest -n auto --dist=loadfile -s -v ./tests/models/my_new_model
 ```
 
-Tatsächlich ist dies genau, wie unser `make test` Befehl implementiert ist!
+Analog für den `examples` Ordner, geben Sie einen *Pfad zu einem Unterordner oder einer Testdatei* an, um den Test auszuführen. Z. B. führt der folgende Befehl den Test des Unterordners für Textklassifizierung im PyTorch `examples` Ordner durch:
+
+```bash
+pip install -r examples/xxx/requirements.txt  # nur beim ersten Mal erforderlich
+python -m pytest -n auto --dist=loadfile -s -v ./examples/pytorch/text-classification
+```
+
+Tatsächlich ist dies genau, wie unsere `make test` und `make test-examples` Befehle implementiert sind (abgesehen von `pip install`)!
 
 Sie können auch eine kleinere Anzahl an Tests angeben, um nur die Funktion, an der Sie arbeiten, zu testen.
 
@@ -258,12 +265,13 @@ Standardmäßig werden langsame Tests übersprungen, aber Sie können die Umgebu
 
 <Tip warning={true}>
 
-Vergessen Sie nicht, einen *Pfad zu einem Unterordner oder einer Testdatei* anzugeben, um den Test auszuführen. Sonst führen Sie alle Tests im `tests` Ordner aus, was sehr lange dauern wird!
+Vergessen Sie nicht, einen *Pfad zu einem Unterordner oder einer Testdatei* anzugeben, um den Test auszuführen. Sonst führen Sie alle Tests im `tests` oder `examples` Ordner aus, was sehr lange dauern wird!
 
 </Tip>
 
 ```bash
 RUN_SLOW=yes python -m pytest -n auto --dist=loadfile -s -v ./tests/models/my_new_model
+RUN_SLOW=yes python -m pytest -n auto --dist=loadfile -s -v ./examples/pytorch/text-classification
 ```
 
 Wie bei den langsamen Tests gibt es auch andere Umgebungsvariablen, die standardmäßig beim Testen nicht gesetzt sind:
@@ -278,6 +286,7 @@ Das bedeutet, `unittest` wird vollständig unterstützt. Folgend wird beschriebe
 
 ```bash
 python -m unittest discover -s tests -t . -v
+python -m unittest discover -s examples -t examples -v
 ```
 
 ### Stil-Leitfaden

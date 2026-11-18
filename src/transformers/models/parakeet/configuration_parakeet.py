@@ -57,7 +57,7 @@ class ParakeetEncoderConfig(PreTrainedConfig):
     """
 
     model_type = "parakeet_encoder"
-    keys_to_ignore_at_inference = ["cache"]
+    keys_to_ignore_at_inference = ["past_key_values"]
 
     hidden_size: int = 1024
     num_hidden_layers: int = 24
@@ -114,9 +114,7 @@ class ParakeetCTCConfig(PreTrainedConfig):
     """
 
     model_type = "parakeet_ctc"
-    sub_configs_defaults = {
-        "encoder_config": ParakeetEncoderConfig,
-    }
+    sub_configs = {"encoder_config": ParakeetEncoderConfig}
 
     vocab_size: int = 1025
     ctc_loss_reduction: str = "mean"
@@ -125,8 +123,12 @@ class ParakeetCTCConfig(PreTrainedConfig):
     pad_token_id: int | None = 1024
 
     def __post_init__(self, **kwargs):
-        super().__post_init__(**kwargs)
+        if isinstance(self.encoder_config, dict):
+            self.encoder_config = ParakeetEncoderConfig(**self.encoder_config)
+        elif self.encoder_config is None:
+            self.encoder_config = ParakeetEncoderConfig()
         self.initializer_range = self.encoder_config.initializer_range
+        super().__post_init__(**kwargs)
 
 
 @auto_docstring(checkpoint="nvidia/parakeet-rnnt-0.6b")
@@ -160,7 +162,7 @@ class ParakeetRNNTConfig(PreTrainedConfig):
     """
 
     model_type = "parakeet_rnnt"
-    sub_configs_defaults = {"encoder_config": ParakeetEncoderConfig}
+    sub_configs = {"encoder_config": ParakeetEncoderConfig}
 
     vocab_size: int = 8193
     decoder_hidden_size: int = 640
@@ -173,8 +175,12 @@ class ParakeetRNNTConfig(PreTrainedConfig):
     is_encoder_decoder: bool = True
 
     def __post_init__(self, **kwargs):
-        super().__post_init__(**kwargs)
+        if isinstance(self.encoder_config, dict):
+            self.encoder_config = ParakeetEncoderConfig(**self.encoder_config)
+        elif self.encoder_config is None:
+            self.encoder_config = ParakeetEncoderConfig()
         self.initializer_range = self.encoder_config.initializer_range
+        super().__post_init__(**kwargs)
 
 
 @auto_docstring(checkpoint="nvidia/parakeet-tdt-0.6b-v3")

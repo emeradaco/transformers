@@ -42,17 +42,17 @@ from .configuration_altclip import AltCLIPConfig, AltCLIPTextConfig, AltCLIPVisi
 @dataclass
 class AltCLIPOutput(ModelOutput):
     r"""
-    loss (`torch.Tensor` of shape `(1,)`, *optional*, returned when `return_loss` is `True`):
+    loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `return_loss` is `True`):
         Contrastive loss for image-text similarity.
-    logits_per_image (`torch.Tensor` of shape `(image_batch_size, text_batch_size)`):
+    logits_per_image (`torch.FloatTensor` of shape `(image_batch_size, text_batch_size)`):
         The scaled dot product scores between `image_embeds` and `text_embeds`. This represents the image-text
         similarity scores.
-    logits_per_text (`torch.Tensor` of shape `(text_batch_size, image_batch_size)`):
+    logits_per_text (`torch.FloatTensor` of shape `(text_batch_size, image_batch_size)`):
         The scaled dot product scores between `text_embeds` and `image_embeds`. This represents the text-image
         similarity scores.
-    text_embeds (`torch.Tensor` of shape `(batch_size, output_dim`):
+    text_embeds (`torch.FloatTensor` of shape `(batch_size, output_dim`):
         The text embeddings obtained by applying the projection layer to the pooled output of [`AltCLIPTextModel`].
-    image_embeds (`torch.Tensor` of shape `(batch_size, output_dim`):
+    image_embeds (`torch.FloatTensor` of shape `(batch_size, output_dim`):
         The image embeddings obtained by applying the projection layer to the pooled output of [`AltCLIPVisionModel`].
     text_model_output (`BaseModelOutputWithPooling`):
         The output of the [`AltCLIPTextModel`].
@@ -60,11 +60,11 @@ class AltCLIPOutput(ModelOutput):
         The output of the [`AltCLIPVisionModel`].
     """
 
-    loss: torch.Tensor | None = None
-    logits_per_image: torch.Tensor | None = None
-    logits_per_text: torch.Tensor | None = None
-    text_embeds: torch.Tensor | None = None
-    image_embeds: torch.Tensor | None = None
+    loss: torch.FloatTensor | None = None
+    logits_per_image: torch.FloatTensor | None = None
+    logits_per_text: torch.FloatTensor | None = None
+    text_embeds: torch.FloatTensor | None = None
+    image_embeds: torch.FloatTensor | None = None
     text_model_output: BaseModelOutputWithPooling = None
     vision_model_output: BaseModelOutputWithPooling = None
 
@@ -96,13 +96,15 @@ class AltRobertaEmbeddings(nn.Module):
         input_ids: torch.LongTensor | None = None,
         token_type_ids: torch.LongTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
-        cache_length: int = 0,
+        inputs_embeds: torch.FloatTensor | None = None,
+        past_key_values_length: int = 0,
     ) -> torch.Tensor:
         if position_ids is None:
             if input_ids is not None:
                 # Create the position ids from the input token ids. Any padded tokens remain padded.
-                position_ids = self.create_position_ids_from_input_ids(input_ids, self.padding_idx, cache_length)
+                position_ids = self.create_position_ids_from_input_ids(
+                    input_ids, self.padding_idx, past_key_values_length
+                )
             else:
                 position_ids = self.create_position_ids_from_inputs_embeds(inputs_embeds, self.padding_idx)
 
@@ -156,7 +158,7 @@ class AltRobertaEmbeddings(nn.Module):
         return position_ids.unsqueeze(0).expand(input_shape)
 
     @staticmethod
-    def create_position_ids_from_input_ids(input_ids, padding_idx, cache_length=0):
+    def create_position_ids_from_input_ids(input_ids, padding_idx, past_key_values_length=0):
         """
         Replace non-padding symbols with their position numbers. Position numbers begin at padding_idx+1. Padding symbols
         are ignored. This is modified from fairseq's `utils.make_positions`.
@@ -168,7 +170,7 @@ class AltRobertaEmbeddings(nn.Module):
         """
         # The series of casts and type-conversions here are carefully balanced to both work with ONNX export and XLA.
         mask = input_ids.ne(padding_idx).int()
-        incremental_indices = (torch.cumsum(mask, dim=1).type_as(mask) + cache_length) * mask
+        incremental_indices = (torch.cumsum(mask, dim=1).type_as(mask) + past_key_values_length) * mask
         return incremental_indices.long() + padding_idx
 
 
@@ -220,7 +222,7 @@ class AltRobertaSelfAttention(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         input_shape = hidden_states.shape[:-1]
@@ -272,7 +274,7 @@ class AltRobertaAttention(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> torch.Tensor:
         residual = hidden_states
@@ -326,7 +328,7 @@ class AltRobertaLayer(GradientCheckpointingLayer):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> torch.Tensor:
         hidden_states = self.attention(
@@ -483,7 +485,7 @@ class AltCLIPEncoderLayer(GradientCheckpointingLayer):
         hidden_states: torch.Tensor,
         attention_mask: torch.Tensor,
         **kwargs: Unpack[TransformersKwargs],
-    ) -> torch.Tensor:
+    ) -> torch.FloatTensor:
         residual = hidden_states
 
         hidden_states = self.layer_norm1(hidden_states)
@@ -600,7 +602,7 @@ class AltCLIPVisionEmbeddings(nn.Module):
 
         return torch.cat((class_pos_embed, patch_pos_embed), dim=1)
 
-    def forward(self, pixel_values: torch.Tensor, interpolate_pos_encoding=False) -> torch.Tensor:
+    def forward(self, pixel_values: torch.FloatTensor, interpolate_pos_encoding=False) -> torch.Tensor:
         batch_size, _, height, width = pixel_values.shape
         if not interpolate_pos_encoding and (height != self.image_size or width != self.image_size):
             raise ValueError(
@@ -636,6 +638,7 @@ class AltCLIPPreTrainedModel(PreTrainedModel):
         "attentions": AltCLIPAttention,
     }
 
+    @torch.no_grad()
     def _init_weights(self, module):
         """Initialize the weights"""
         super()._init_weights(module)
@@ -697,7 +700,7 @@ class AltCLIPVisionModel(AltCLIPPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        pixel_values: torch.Tensor | None = None,
+        pixel_values: torch.FloatTensor | None = None,
         interpolate_pos_encoding: bool | None = False,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithPooling:
@@ -705,7 +708,7 @@ class AltCLIPVisionModel(AltCLIPPreTrainedModel):
         Examples:
 
         ```python
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
         >>> from PIL import Image
         >>> from transformers import AutoProcessor, AltCLIPVisionModel
@@ -760,7 +763,7 @@ class AltRobertaModel(AltCLIPPreTrainedModel):
         "attentions": AltRobertaSelfAttention,
     }
 
-    def __init__(self, config: AltCLIPTextConfig, add_pooling_layer=True):
+    def __init__(self, config, add_pooling_layer=True):
         r"""
         add_pooling_layer (bool, *optional*, defaults to `True`):
             Whether to add a pooling layer
@@ -835,7 +838,7 @@ class AltCLIPTextModel(AltCLIPPreTrainedModel):
     _input_embed_layer = "word_embeddings"
     base_model_prefix = "roberta"
 
-    def __init__(self, config: AltCLIPTextConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.roberta = AltRobertaModel(config, add_pooling_layer=False)
         self.transformation = nn.Linear(config.hidden_size, config.project_dim)
@@ -983,7 +986,7 @@ class AltCLIPModel(AltCLIPPreTrainedModel):
     @auto_docstring
     def get_image_features(
         self,
-        pixel_values: torch.Tensor,
+        pixel_values: torch.FloatTensor,
         interpolate_pos_encoding: bool = False,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple | BaseModelOutputWithPooling:
@@ -1021,7 +1024,7 @@ class AltCLIPModel(AltCLIPPreTrainedModel):
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        pixel_values: torch.Tensor | None = None,
+        pixel_values: torch.FloatTensor | None = None,
         attention_mask: torch.Tensor | None = None,
         token_type_ids: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,

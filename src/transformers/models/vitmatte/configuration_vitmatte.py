@@ -15,7 +15,8 @@
 
 from huggingface_hub.dataclasses import strict
 
-from ...configuration_utils import PreTrainedConfig, SubConfigSpec
+from ...backbone_utils import consolidate_backbone_kwargs_to_config
+from ...configuration_utils import PreTrainedConfig
 from ...utils import auto_docstring
 from ..auto.configuration_auto import AutoConfig
 
@@ -47,13 +48,7 @@ class VitMatteConfig(PreTrainedConfig):
     ```"""
 
     model_type = "vitmatte"
-    sub_configs_defaults = {
-        "backbone_config": SubConfigSpec(
-            config_class=AutoConfig,
-            model_type="vitdet",
-            init_kwargs={"out_features": ["stage4"]},
-        ),
-    }
+    sub_configs = {"backbone_config": AutoConfig}
 
     backbone_config: dict | PreTrainedConfig | None = None
     hidden_size: int = 384
@@ -61,6 +56,15 @@ class VitMatteConfig(PreTrainedConfig):
     initializer_range: float = 0.02
     convstream_hidden_sizes: list[int] | tuple[int, ...] = (48, 96, 192)
     fusion_hidden_sizes: list[int] | tuple[int, ...] = (256, 128, 64, 32)
+
+    def __post_init__(self, **kwargs):
+        self.backbone_config, kwargs = consolidate_backbone_kwargs_to_config(
+            backbone_config=self.backbone_config,
+            default_config_type="vitdet",
+            default_config_kwargs={"out_features": ["stage4"]},
+            **kwargs,
+        )
+        super().__post_init__(**kwargs)
 
 
 __all__ = ["VitMatteConfig"]

@@ -36,7 +36,7 @@ def summarize(report_path: str):
     if not p.exists():
         raise FileNotFoundError(f"Report file not found: {p.resolve()}")
 
-    data = json.loads(p.read_text(encoding="utf-8"))
+    data = json.loads(p.read_text())
     tests = data.get("tests", [])
 
     # Overall counts

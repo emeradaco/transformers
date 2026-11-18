@@ -3,13 +3,11 @@ on:
 
 name: Secret Leaks
 
-
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   trufflehog:
-    permissions:
-      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

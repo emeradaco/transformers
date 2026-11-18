@@ -23,7 +23,7 @@ from huggingface_hub.dataclasses import strict
 from ...configuration_utils import PreTrainedConfig
 from ...modeling_rope_utils import RopeParameters
 from ...utils import auto_docstring
-from ...utils.generic import is_flash_attention_requested
+from ...utils.generic import is_flash_attention_requested, split_attention_implementation
 from ...utils.type_validators import interval
 
 
@@ -53,7 +53,7 @@ class HrmTextConfig(PreTrainedConfig):
     """
 
     model_type = "hrm_text"
-    keys_to_ignore_at_inference = ["cache"]
+    keys_to_ignore_at_inference = ["past_key_values"]
 
     base_model_tp_plan = {
         **{f"{stack}.layers.*.self_attn.q_proj": "colwise" for stack in ("L_module", "H_module")},
@@ -132,7 +132,8 @@ class HrmTextConfig(PreTrainedConfig):
     @_attn_implementation.setter
     def _attn_implementation(self, value: str | dict | None):
         if value is not None and self.prefix_lm:
-            if is_flash_attention_requested(requested_attention_implementation=value):
+            _, base_implementation = split_attention_implementation(value)
+            if is_flash_attention_requested(requested_attention_implementation=base_implementation):
                 raise ValueError(
                     f"`attn_implementation={value!r}` is not supported when "
                     "`config.prefix_lm=True`: FlashAttention cannot represent the PrefixLM 4-D mask "

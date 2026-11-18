@@ -289,7 +289,7 @@ class AutoformerModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCa
                 [
                     "decoder_attention_mask",
                     "encoder_outputs",
-                    "cache",
+                    "past_key_values",
                     "use_cache",
                 ]
             )
@@ -349,8 +349,8 @@ class AutoformerModelTest(ModelTesterMixin, PipelineTesterMixin, unittest.TestCa
             if "trend" in outputs:
                 correct_outlen += 1
 
-            if "cache" in outputs:
-                correct_outlen += 1  # cache have been returned
+            if "past_key_values" in outputs:
+                correct_outlen += 1  # past_key_values have been returned
 
             if "loss" in outputs:
                 correct_outlen += 1

@@ -249,7 +249,7 @@ class UVDocPreTrainedModel(PreTrainedModel):
     """
 
     config: UVDocConfig
-    base_model_prefix = "model"
+    base_model_prefix = "uvdoc"
     main_input_name = "pixel_values"
     input_modalities = ("image",)
     _can_compile_fullgraph = True
@@ -258,6 +258,7 @@ class UVDocPreTrainedModel(PreTrainedModel):
         "hidden_states": UVDocBridgeBlock,
     }
 
+    @torch.no_grad()
     def _init_weights(self, module):
         """Initialize the weights."""
         super()._init_weights(module)
@@ -266,7 +267,7 @@ class UVDocPreTrainedModel(PreTrainedModel):
 
 
 class UVDocBridge(UVDocPreTrainedModel):
-    def __init__(self, config: UVDocConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.bridge = nn.ModuleList([])
         for bridge_index in range(len(config.stage_configs)):
@@ -313,7 +314,7 @@ class UVDocBackbone(BackboneMixin, UVDocPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        pixel_values: torch.Tensor,
+        pixel_values: torch.FloatTensor,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BackboneOutput:
         hidden_states = self.resnet(pixel_values)
@@ -374,9 +375,9 @@ class UVDocModel(UVDocPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        pixel_values: torch.Tensor,
+        pixel_values: torch.FloatTensor,
         **kwargs: Unpack[TransformersKwargs],
-    ) -> tuple[torch.Tensor] | BaseModelOutputWithNoAttention:
+    ) -> tuple[torch.FloatTensor] | BaseModelOutputWithNoAttention:
         backbone_outputs = self.backbone(pixel_values, **kwargs)
         fused_outputs = torch.cat(backbone_outputs.feature_maps, dim=1)
         last_hidden_state = self.head(fused_outputs, **kwargs)

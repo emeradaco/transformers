@@ -31,7 +31,6 @@ from transformers import (
     is_torch_available,
     is_vision_available,
 )
-from transformers.audio_utils import load_audio
 from transformers.testing_utils import (
     Expectations,
     cleanup,
@@ -42,6 +41,7 @@ from transformers.testing_utils import (
     slow,
     torch_device,
 )
+from transformers.utils import is_torchcodec_available
 
 from ...generation.test_utils import GenerationTesterMixin
 from ...test_configuration_common import ConfigTester
@@ -55,6 +55,10 @@ if is_torch_available():
 
 if is_vision_available():
     from PIL import Image
+
+
+if is_torchcodec_available():
+    import torchcodec
 
 
 class Phi4MultimodalModelTester:
@@ -287,8 +291,9 @@ class Phi4MultimodalIntegrationTest(unittest.TestCase):
         self.assistant_token = "<|assistant|>"
         self.end_token = "<|end|>"
         self.image = Image.open(requests.get(self.image_url, stream=True).raw)
-        self.sampling_rate = 16000
-        self.audio = load_audio(self.audio_url, sampling_rate=self.sampling_rate)
+        audio_bytes = requests.get(self.audio_url, stream=True).raw.data
+        samples = torchcodec.decoders.AudioDecoder(audio_bytes).get_all_samples()
+        self.audio, self.sampling_rate = samples.data, samples.sample_rate
 
         cleanup(torch_device, gc_collect=True)
 
@@ -301,7 +306,7 @@ class Phi4MultimodalIntegrationTest(unittest.TestCase):
         )
 
         prompt = f"{self.user_token}What is the answer for 1+1? Explain it.{self.end_token}{self.assistant_token}"
-        inputs = self.processor(text=prompt, images=None, return_tensors="pt").to(torch_device)
+        inputs = self.processor(prompt, images=None, return_tensors="pt").to(torch_device)
 
         output = model.generate(
             **inputs,
@@ -321,7 +326,7 @@ class Phi4MultimodalIntegrationTest(unittest.TestCase):
         )
 
         prompt = f"{self.user_token}<|image|>What is shown in this image?{self.end_token}{self.assistant_token}"
-        inputs = self.processor(text=prompt, images=self.image, return_tensors="pt").to(torch_device)
+        inputs = self.processor(prompt, images=self.image, return_tensors="pt").to(torch_device)
 
         output = model.generate(
             **inputs,
@@ -355,7 +360,7 @@ class Phi4MultimodalIntegrationTest(unittest.TestCase):
             placeholder += "<|image|>"
 
         prompt = f"{self.user_token}{placeholder}Summarize the deck of slides.{self.end_token}{self.assistant_token}"
-        inputs = self.processor(text=prompt, images=images, return_tensors="pt").to(torch_device)
+        inputs = self.processor(prompt, images, return_tensors="pt").to(torch_device)
 
         output = model.generate(
             **inputs,
@@ -375,9 +380,9 @@ class Phi4MultimodalIntegrationTest(unittest.TestCase):
         )
 
         prompt = f"{self.user_token}<|audio|>What is happening in this audio?{self.end_token}{self.assistant_token}"
-        inputs = self.processor(
-            text=prompt, audio=self.audio, sampling_rate=self.sampling_rate, return_tensors="pt"
-        ).to(torch_device)
+        inputs = self.processor(prompt, audio=self.audio, sampling_rate=self.sampling_rate, return_tensors="pt").to(
+            torch_device
+        )
 
         output = model.generate(
             **inputs,

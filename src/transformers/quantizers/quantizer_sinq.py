@@ -44,6 +44,7 @@ class SinqHfQuantizer(HfQuantizer):
           * A-SINQ (activation-aware) SINQ quantization
     """
 
+    requires_parameters_quantization: bool = True
     quantization_config: SinqConfig
 
     def __init__(self, quantization_config: SinqConfig, **kwargs):
@@ -167,13 +168,34 @@ class SinqHfQuantizer(HfQuantizer):
 
         return SinqQuantize(self)
 
-    # A checkpoint produced by `SINQLinear.state_dict`, rebuilt into a `SINQLinear`
-    serialized_names = {".weight": [".W_q", ".meta", ".bias"]}
+    def get_weight_conversions(self):
+        """
+        If `pre_quantized=True`, interpret a checkpoint produced by SINQLinear.state_dict:
 
-    def get_load_operations(self):
-        from ..integrations.sinq import SinqDeserialize
+            <prefix>.W_q
+            <prefix>.bias
+            <prefix>.meta
 
-        return {"deserialize": SinqDeserialize}
+        via a WeightConverter + SinqDeserialize so that we reconstruct a SINQLinear
+        module instead of a plain nn.Linear.
+        """
+        from ..core_model_loading import WeightConverter
+
+        if self.pre_quantized:
+            from ..integrations.sinq import SinqDeserialize
+
+            return [
+                WeightConverter(
+                    source_patterns=[
+                        ".W_q",
+                        ".meta",
+                        ".bias",
+                    ],
+                    target_patterns=[".weight"],
+                    operations=[SinqDeserialize(self)],
+                )
+            ]
+        return []
 
     def _process_model_before_weight_loading(
         self,

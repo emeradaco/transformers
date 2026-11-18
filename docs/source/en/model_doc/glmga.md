@@ -23,7 +23,8 @@ limitations under the License.
 
 ## Overview
 
-Paper and author details for the Glmga model are not available yet.
+The Glmga model was proposed in [<INSERT PAPER NAME HERE>](<INSERT PAPER LINK HERE>) by <INSERT AUTHORS HERE>.
+<INSERT SHORT SUMMARY HERE>
 
 The abstract from the paper is the following:
 
@@ -33,7 +34,8 @@ Tips:
 
 <INSERT TIPS ABOUT MODEL HERE>
 
-The model contribution details and original code repository are not available yet.
+This model was contributed by [INSERT YOUR HF USERNAME HERE](https://huggingface.co/<INSERT YOUR HF USERNAME HERE>).
+The original code can be found [here](<INSERT LINK TO GITHUB REPO HERE>).
 
 ## Usage examples
 

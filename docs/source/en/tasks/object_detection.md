@@ -87,11 +87,11 @@ categories to integer ids, compute areas, and filter out degenerate bounding box
 ```py
 >>> def prepare_example(example, idx):
 ...     objects = example["objects"]
-...     in_bboxes = objects["bbox"]
+...     bboxes = objects["bbox"]
 ...     categories = objects["category"]
 ...     img_w, img_h = example["width"], example["height"]
 ...     bboxes, cats, areas, ids = [], [], [], []
-...     for i, (bbox, cat) in enumerate(zip(in_bboxes, categories)):
+...     for i, (bbox, cat) in enumerate(zip(bboxes, categories)):
 ...         x, y, w, h = bbox
 ...         if w <= 0 or h <= 0:
 ...             continue

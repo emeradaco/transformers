@@ -33,12 +33,14 @@ from ...image_utils import (
     SizeDict,
 )
 from ...processing_utils import ImagesKwargs, Unpack
-from ...utils import TensorType, auto_docstring, is_torch_available
+from ...utils import TensorType, auto_docstring, is_torch_available, is_torchvision_available
 from ...utils.import_utils import requires
 
 
 if is_torch_available():
     import torch
+if is_torchvision_available():
+    import torchvision.transforms.v2.functional as tvF
 
 
 class SegformerImageProcessorKwargs(ImagesKwargs, total=False):
@@ -52,7 +54,7 @@ class SegformerImageProcessorKwargs(ImagesKwargs, total=False):
     do_reduce_labels: bool
 
 
-@auto_docstring
+@requires(backends=("torch", "torchvision"))
 class SegformerImageProcessorPil(PilBackend):
     """PIL backend for Segformer with reduce_label support."""
 
@@ -119,7 +121,7 @@ class SegformerImageProcessorPil(PilBackend):
                     "do_normalize": False,
                     "do_rescale": False,
                     # Nearest resample is used for segmentation maps instead of BILINEAR.
-                    "resample": PILImageResampling.NEAREST,
+                    "resample": tvF.InterpolationMode.NEAREST_EXACT,
                 }
             )
             processed_segmentation_maps = self._preprocess(

@@ -27,7 +27,6 @@ from ...modeling_rope_utils import RopeParameters
 from ...modeling_utils import PreTrainedModel
 from ...processing_utils import Unpack
 from ...utils import TransformersKwargs, auto_docstring, logging
-from ...utils.deprecation import deprecate_kwarg
 from ..llama.modeling_llama import (
     LlamaAttention,
     LlamaForCausalLM,
@@ -65,7 +64,7 @@ class GemmaConfig(PreTrainedConfig):
     ```"""
 
     model_type = "gemma"
-    keys_to_ignore_at_inference = ["cache"]
+    keys_to_ignore_at_inference = ["past_key_values"]
     base_model_tp_plan = {
         "layers.*.self_attn.q_proj": "colwise",
         "layers.*.self_attn.k_proj": "colwise",
@@ -101,17 +100,6 @@ class GemmaConfig(PreTrainedConfig):
     attention_bias: bool = False
     attention_dropout: float | int = 0.0
     use_bidirectional_attention: bool | None = None
-
-    def __post_init__(self, **kwargs):
-        # #35235 dropped this conversion (which is needed per #29402) which we now handle here instead
-        if self.hidden_act == "gelu":
-            logger.warning_once(
-                'We found `hidden_act="gelu"` in this Gemma config. This is a legacy value of the official '
-                'releases but it is meant to target the tanh approximation. Setting `hidden_act="gelu_pytorch_tanh"` instead.'
-            )
-            self.hidden_act = "gelu_pytorch_tanh"
-
-        super().__post_init__(**kwargs)
 
 
 class GemmaTextScaledWordEmbedding(nn.Embedding):
@@ -169,6 +157,7 @@ class GemmaAttention(LlamaAttention):
 
 
 class GemmaPreTrainedModel(LlamaPreTrainedModel):
+    @torch.no_grad()
     def _init_weights(self, module):
         PreTrainedModel._init_weights(self, module)
         # We initialize with 0s to be 1 centered as the RMSNorm here does (1 + weight)
@@ -186,14 +175,13 @@ class GemmaModel(LlamaModel):
             config.vocab_size, config.hidden_size, self.padding_idx, embed_scale=self.config.hidden_size**0.5
         )
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         use_cache: bool | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithPast:
@@ -203,11 +191,11 @@ class GemmaModel(LlamaModel):
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
-        if use_cache and cache is None:
-            cache = DynamicCache(config=self.config)
+        if use_cache and past_key_values is None:
+            past_key_values = DynamicCache(config=self.config)
 
         if position_ids is None:
-            past_seen_tokens = cache.get_seq_length() if cache is not None else 0
+            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             position_ids = torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device) + past_seen_tokens
             position_ids = position_ids.unsqueeze(0)
 
@@ -215,7 +203,7 @@ class GemmaModel(LlamaModel):
             config=self.config,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
-            cache=cache,
+            past_key_values=past_key_values,
             position_ids=position_ids,
         )
 
@@ -228,7 +216,7 @@ class GemmaModel(LlamaModel):
                 hidden_states,
                 attention_mask=causal_mask,
                 position_ids=position_ids,
-                cache=cache,
+                past_key_values=past_key_values,
                 use_cache=use_cache,
                 position_embeddings=position_embeddings,
                 **kwargs,
@@ -236,7 +224,7 @@ class GemmaModel(LlamaModel):
         hidden_states = self.norm(hidden_states)
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
-            cache=cache if use_cache else None,
+            past_key_values=past_key_values if use_cache else None,
         )
 
 

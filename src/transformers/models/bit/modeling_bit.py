@@ -622,6 +622,7 @@ class BitPreTrainedModel(PreTrainedModel):
     main_input_name = "pixel_values"
     _no_split_modules = ["BitEmbeddings"]
 
+    @torch.no_grad()
     def _init_weights(self, module):
         super()._init_weights(module)
         if isinstance(module, nn.Conv2d):
@@ -637,7 +638,7 @@ class BitPreTrainedModel(PreTrainedModel):
 
 @auto_docstring
 class BitModel(BitPreTrainedModel):
-    def __init__(self, config: BitConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.config = config
 
@@ -696,7 +697,7 @@ class BitModel(BitPreTrainedModel):
     """
 )
 class BitForImageClassification(BitPreTrainedModel):
-    def __init__(self, config: BitConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.bit = BitModel(config)
@@ -711,7 +712,7 @@ class BitForImageClassification(BitPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        pixel_values: torch.Tensor | None = None,
+        pixel_values: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         output_hidden_states: bool | None = None,
         return_dict: bool | None = None,
@@ -750,7 +751,7 @@ class BitForImageClassification(BitPreTrainedModel):
 class BitBackbone(BackboneMixin, BitPreTrainedModel):
     has_attentions = False
 
-    def __init__(self, config: BitConfig):
+    def __init__(self, config):
         super().__init__(config)
 
         self.bit = BitModel(config)
@@ -776,7 +777,7 @@ class BitBackbone(BackboneMixin, BitPreTrainedModel):
         >>> from transformers import AutoImageProcessor, AutoBackbone
         >>> import torch
         >>> from PIL import Image
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
 
         >>> url = "http://images.cocodataset.org/val2017/000000039769.jpg"

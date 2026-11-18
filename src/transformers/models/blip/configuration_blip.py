@@ -142,10 +142,7 @@ class BlipConfig(PreTrainedConfig):
     ```"""
 
     model_type = "blip"
-    sub_configs_defaults = {
-        "text_config": BlipTextConfig,
-        "vision_config": BlipVisionConfig,
-    }
+    sub_configs = {"text_config": BlipTextConfig, "vision_config": BlipVisionConfig}
 
     text_config: dict | PreTrainedConfig | None = None
     vision_config: dict | PreTrainedConfig | None = None
@@ -158,8 +155,21 @@ class BlipConfig(PreTrainedConfig):
     initializer_range: float = 0.02
 
     def __post_init__(self, **kwargs):
-        super().__post_init__(**kwargs)
+        if self.text_config is None:
+            self.text_config = BlipTextConfig()
+            logger.info("`text_config` is `None`. Initializing the `BlipTextConfig` with default values.")
+        elif isinstance(self.text_config, dict):
+            self.text_config = BlipTextConfig(**self.text_config)
+
+        if self.vision_config is None:
+            self.vision_config = BlipVisionConfig()
+            logger.info("`vision_config` is `None`. initializing the `BlipVisionConfig` with default values.")
+        elif isinstance(self.vision_config, dict):
+            self.vision_config = BlipVisionConfig(**self.vision_config)
+
         self.text_config.encoder_hidden_size = self.vision_config.hidden_size
+
+        super().__post_init__(**kwargs)
 
 
 __all__ = ["BlipConfig", "BlipTextConfig", "BlipVisionConfig"]

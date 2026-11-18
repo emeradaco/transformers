@@ -40,6 +40,9 @@ class MetalHfQuantizer(HfQuantizer):
     requires_calibration = False
     quantization_config: "MetalConfig"
 
+    def __init__(self, quantization_config, **kwargs):
+        super().__init__(quantization_config, **kwargs)
+
     def validate_environment(self, *args, **kwargs):
         if self.quantization_config.dequantize:
             return
@@ -112,9 +115,16 @@ class MetalHfQuantizer(HfQuantizer):
 
         return MetalQuantize(self)
 
-    serialized_names = {"weight": ["weight", "scales", "qbiases"]}
-
-    def get_load_operations(self):
+    def get_weight_conversions(self):
+        from ..core_model_loading import WeightConverter
         from ..integrations.metal_quantization import MetalDequantize
 
-        return {"dequantize": MetalDequantize}
+        if self.pre_quantized and self.quantization_config.dequantize:
+            return [
+                WeightConverter(
+                    source_patterns=["weight$", "scales", "qbiases"],
+                    target_patterns="weight",
+                    operations=[MetalDequantize(self)],
+                )
+            ]
+        return []

@@ -21,6 +21,7 @@ from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
 from ... import initialization as init
 from ...activations import ACT2FN
+from ...masking_utils import create_bidirectional_mask
 from ...modeling_layers import GradientCheckpointingLayer
 from ...modeling_outputs import (
     BaseModelOutputWithCrossAttentions,
@@ -566,10 +567,7 @@ class MraSelfAttention(nn.Module):
         )
 
         # revert changes made by float mask
-        if attention_mask.ndim == 4 and attention_mask.is_floating_point():
-            # (B, 1, Q, K) additive -> (B, K) with 1 = real-token, 0 = pad
-            attention_mask = (attention_mask[:, 0, -1, :] == 0).int()
-
+        attention_mask = 1.0 + attention_mask / 10000.0
         attention_mask = (
             attention_mask.squeeze()
             .repeat(1, self.num_attention_heads, 1)
@@ -789,6 +787,7 @@ class MraPreTrainedModel(PreTrainedModel):
     base_model_prefix = "mra"
     supports_gradient_checkpointing = True
 
+    @torch.no_grad()
     def _init_weights(self, module: nn.Module):
         """Initialize the weights"""
         super()._init_weights(module)
@@ -801,7 +800,7 @@ class MraPreTrainedModel(PreTrainedModel):
 
 @auto_docstring
 class MraModel(MraPreTrainedModel):
-    def __init__(self, config: MraConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.config = config
 
@@ -865,6 +864,14 @@ class MraModel(MraPreTrainedModel):
             inputs_embeds=inputs_embeds,
         )
 
+        attention_mask = create_bidirectional_mask(
+            config=self.config,
+            inputs_embeds=embedding_output[:, 0:1, :],  # Force q_len == 1
+            attention_mask=attention_mask,
+            # Always materialize the mask; the encoder below consumes it as a tensor.
+            allow_is_bidirectional_skip=False,
+        )
+
         encoder_outputs = self.encoder(
             embedding_output,
             attention_mask=attention_mask,
@@ -891,7 +898,7 @@ class MraForMaskedLM(MraPreTrainedModel):
         "cls.predictions.decoder.weight": "mra.embeddings.word_embeddings.weight",
     }
 
-    def __init__(self, config: MraConfig):
+    def __init__(self, config):
         super().__init__(config)
 
         self.mra = MraModel(config)
@@ -920,6 +927,12 @@ class MraForMaskedLM(MraPreTrainedModel):
         return_dict: bool | None = None,
         **kwargs,
     ) -> tuple | MaskedLMOutput:
+        r"""
+        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Labels for computing the masked language modeling loss. Indices should be in `[-100, 0, ...,
+            config.vocab_size]` (see `input_ids` docstring) Tokens with indices set to `-100` are ignored (masked), the
+            loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
+        """
         return_dict = return_dict if return_dict is not None else self.config.return_dict
 
         outputs = self.mra(
@@ -981,7 +994,7 @@ class MraClassificationHead(nn.Module):
     """
 )
 class MraForSequenceClassification(MraPreTrainedModel):
-    def __init__(self, config: MraConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.mra = MraModel(config)
@@ -1003,6 +1016,12 @@ class MraForSequenceClassification(MraPreTrainedModel):
         return_dict: bool | None = None,
         **kwargs,
     ) -> tuple | SequenceClassifierOutput:
+        r"""
+        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
+            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
+            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
+        """
         return_dict = return_dict if return_dict is not None else self.config.return_dict
 
         outputs = self.mra(
@@ -1054,7 +1073,7 @@ class MraForSequenceClassification(MraPreTrainedModel):
 
 @auto_docstring
 class MraForMultipleChoice(MraPreTrainedModel):
-    def __init__(self, config: MraConfig):
+    def __init__(self, config):
         super().__init__(config)
 
         self.mra = MraModel(config)
@@ -1098,10 +1117,14 @@ class MraForMultipleChoice(MraPreTrainedModel):
             config.max_position_embeddings - 1]`.
 
             [What are position IDs?](../glossary#position-ids)
-        inputs_embeds (`torch.Tensor` of shape `(batch_size, num_choices, sequence_length, hidden_size)`, *optional*):
+        inputs_embeds (`torch.FloatTensor` of shape `(batch_size, num_choices, sequence_length, hidden_size)`, *optional*):
             Optionally, instead of passing `input_ids` you can choose to directly pass an embedded representation. This
             is useful if you want more control over how to convert *input_ids* indices into associated vectors than the
             model's internal embedding lookup matrix.
+        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+            Labels for computing the multiple choice classification loss. Indices should be in `[0, ...,
+            num_choices-1]` where `num_choices` is the size of the second dimension of the input tensors. (See
+            `input_ids` above)
         """
         return_dict = return_dict if return_dict is not None else self.config.return_dict
         num_choices = input_ids.shape[1] if input_ids is not None else inputs_embeds.shape[1]
@@ -1153,7 +1176,7 @@ class MraForMultipleChoice(MraPreTrainedModel):
 
 @auto_docstring
 class MraForTokenClassification(MraPreTrainedModel):
-    def __init__(self, config: MraConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
 
@@ -1177,6 +1200,10 @@ class MraForTokenClassification(MraPreTrainedModel):
         return_dict: bool | None = None,
         **kwargs,
     ) -> tuple | TokenClassifierOutput:
+        r"""
+        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Labels for computing the token classification loss. Indices should be in `[0, ..., config.num_labels - 1]`.
+        """
         return_dict = return_dict if return_dict is not None else self.config.return_dict
 
         outputs = self.mra(
@@ -1222,7 +1249,7 @@ class MraForTokenClassification(MraPreTrainedModel):
 
 @auto_docstring
 class MraForQuestionAnswering(MraPreTrainedModel):
-    def __init__(self, config: MraConfig):
+    def __init__(self, config):
         super().__init__(config)
 
         config.num_labels = 2

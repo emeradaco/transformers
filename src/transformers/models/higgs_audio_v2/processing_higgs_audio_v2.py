@@ -21,7 +21,6 @@ from ...feature_extraction_utils import BatchFeature
 from ...processing_utils import ProcessingKwargs, ProcessorMixin, Unpack
 from ...tokenization_utils_base import PreTokenizedInput, TextInput
 from ...utils import is_soundfile_available, is_torch_available, logging
-from ...utils.deprecation import deprecate_attr
 from ...utils.import_utils import requires, requires_backends
 
 
@@ -35,6 +34,19 @@ if is_soundfile_available():
 
 
 logger = logging.get_logger(__name__)
+
+
+class HiggsAudioV2ProcessorKwargs(ProcessingKwargs, total=False):
+    _defaults = {
+        "text_kwargs": {
+            "padding": True,
+            "padding_side": "left",
+        },
+        "audio_kwargs": {
+            "padding": False,
+            "sampling_rate": 24000,
+        },
+    }
 
 
 @requires(backends=("torch",))
@@ -67,15 +79,6 @@ class HiggsAudioV2Processor(ProcessorMixin):
         audio_stream_eos_id (`int`, *optional*, defaults to 1025):
             The ID for the end-of-stream token in audio sequences.
     """
-
-    text_kwargs = {
-        "padding": True,
-        "padding_side": "left",
-    }
-    audio_kwargs = {
-        "padding": False,
-        "sampling_rate": 24000,
-    }
 
     feature_extractor_class = "DacFeatureExtractor"
     tokenizer_class = "AutoTokenizer"
@@ -128,9 +131,10 @@ class HiggsAudioV2Processor(ProcessorMixin):
         text: TextInput | PreTokenizedInput | list[TextInput] | list[PreTokenizedInput] | None = None,
         audio: AudioInput | None = None,
         output_labels: bool | None = False,
-        **kwargs: Unpack[ProcessingKwargs],
+        **kwargs: Unpack[HiggsAudioV2ProcessorKwargs],
     ):
         output_kwargs = self._merge_kwargs(
+            HiggsAudioV2ProcessorKwargs,
             tokenizer_init_kwargs=self.tokenizer.init_kwargs,
             **kwargs,
         )
@@ -317,11 +321,12 @@ class HiggsAudioV2Processor(ProcessorMixin):
 
         return torch.cat(slices, dim=1)
 
+    # Copied from transformers.models.csm.processing_csm.CsmProcessor.save_audio with Csm->HiggsAudioV2
     def save_audio(
         self,
         audio: AudioInput,
         saving_path: str | Path | list[str | Path],
-        **kwargs: Unpack[ProcessingKwargs],
+        **kwargs: Unpack[HiggsAudioV2ProcessorKwargs],
     ):
         # TODO: @eustlb, this should be in AudioProcessor
         requires_backends(self, ["soundfile"])
@@ -339,6 +344,7 @@ class HiggsAudioV2Processor(ProcessorMixin):
             raise ValueError("The number of audio and saving paths must be the same")
 
         output_kwargs = self._merge_kwargs(
+            HiggsAudioV2ProcessorKwargs,
             **kwargs,
         )
         audio_kwargs = output_kwargs["audio_kwargs"]
@@ -357,7 +363,5 @@ class HiggsAudioV2Processor(ProcessorMixin):
         audio_tokenizer_input_names = ["audio_input_ids", "audio_input_ids_mask"]
         return tokenizer_input_names + audio_tokenizer_input_names
 
-
-__getattr__ = deprecate_attr(__name__, rename={"HiggsAudioV2ProcessorKwargs": (ProcessingKwargs, "5.29.0")})
 
 __all__ = ["HiggsAudioV2Processor"]

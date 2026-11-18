@@ -23,7 +23,7 @@ To be able to build batches, data collators may apply some processing (like padd
 [`DataCollatorForLanguageModeling`]) also apply some random data augmentation (like random masking)
 on the formed batch.
 
-Examples of use can be found in the [example notebooks](https://github.com/huggingface/notebooks/tree/main/examples).
+Examples of use can be found in the [example scripts](https://github.com/huggingface/transformers/tree/main/examples) or [example notebooks](../notebooks).
 
 ## Default data collator
 
@@ -48,6 +48,12 @@ Examples of use can be found in the [example notebooks](https://github.com/huggi
 ## DataCollatorForLanguageModeling
 
 [[autodoc]] data.data_collator.DataCollatorForLanguageModeling
+    - numpy_mask_tokens
+    - torch_mask_tokens
+
+## DataCollatorForWholeWordMask
+
+[[autodoc]] data.data_collator.DataCollatorForWholeWordMask
     - numpy_mask_tokens
     - torch_mask_tokens
 

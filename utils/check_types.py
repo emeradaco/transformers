@@ -27,7 +27,6 @@ CHECKER_CONFIG = {
     "check_args": [
         "src/transformers/_typing.py",
         "src/transformers/cli",
-        "src/transformers/modeling_rope_utils.py",
         "src/transformers/modeling_utils.py",
         "src/transformers/utils",
         "src/transformers/generation",

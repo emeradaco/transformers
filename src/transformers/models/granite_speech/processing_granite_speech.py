@@ -18,17 +18,22 @@ from ...feature_extraction_utils import BatchFeature
 from ...processing_utils import ProcessingKwargs, ProcessorMixin, Unpack
 from ...tokenization_python import PreTokenizedInput, TextInput
 from ...utils import auto_docstring
-from ...utils.deprecation import deprecate_attr
+
+
+class GraniteSpeechProcessorKwargs(ProcessingKwargs, total=False):
+    _defaults = {
+        "text_kwargs": {
+            "padding": True,
+        },
+        "audio_kwargs": {
+            "device": "cpu",
+        },
+    }
 
 
 @auto_docstring
 class GraniteSpeechProcessor(ProcessorMixin):
-    text_kwargs = {
-        "padding": True,
-    }
-    audio_kwargs = {
-        "device": "cpu",
-    }
+    valid_processor_kwargs = GraniteSpeechProcessorKwargs
 
     def __init__(
         self,
@@ -52,7 +57,7 @@ class GraniteSpeechProcessor(ProcessorMixin):
         text: TextInput | PreTokenizedInput | list[TextInput] | list[PreTokenizedInput],
         audio: AudioInput | None = None,
         device: str = "cpu",
-        **kwargs: Unpack[ProcessingKwargs],
+        **kwargs: Unpack[GraniteSpeechProcessorKwargs],
     ) -> BatchFeature:
         text = self._validate_inputs(text)
         kwargs.setdefault("audio_kwargs", {}).setdefault("device", device)
@@ -83,7 +88,5 @@ class GraniteSpeechProcessor(ProcessorMixin):
         "Input names returned always by subprocessors but not used in model's `forward`"
         return ["audio_embed_sizes"]
 
-
-__getattr__ = deprecate_attr(__name__, rename={"GraniteSpeechProcessorKwargs": (ProcessingKwargs, "5.29.0")})
 
 __all__ = ["GraniteSpeechProcessor"]

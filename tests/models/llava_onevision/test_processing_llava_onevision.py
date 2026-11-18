@@ -38,6 +38,11 @@ class LlavaOnevisionProcessorTest(ProcessorTesterMixin, unittest.TestCase):
         image_processor_class = cls._get_component_class_from_processor("image_processor", use_fast=False)
         return image_processor_class()
 
+    @classmethod
+    def _setup_test_attributes(cls, processor):
+        cls.image_token = processor.image_token
+        cls.video_token = processor.video_token
+
     @staticmethod
     def prepare_processor_dict():
         return {

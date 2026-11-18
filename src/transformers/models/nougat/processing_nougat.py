@@ -17,14 +17,25 @@ Processor class for Nougat.
 
 from ...processing_utils import ProcessingKwargs, ProcessorMixin
 from ...utils import auto_docstring
-from ...utils.deprecation import deprecate_attr
+
+
+class NougatProcessorKwargs(ProcessingKwargs, total=False):
+    _defaults = {
+        "text_kwargs": {
+            "add_special_tokens": True,
+            "padding": False,
+            "is_split_into_words": False,
+            "verbose": True,
+        },
+        "images_kwargs": {
+            "data_format": "channels_first",
+        },
+    }
 
 
 @auto_docstring
 class NougatProcessor(ProcessorMixin):
-    images_kwargs = {
-        "data_format": "channels_first",
-    }
+    valid_processor_kwargs = NougatProcessorKwargs
 
     def __init__(self, image_processor, tokenizer):
         super().__init__(image_processor, tokenizer)
@@ -44,7 +55,5 @@ class NougatProcessor(ProcessorMixin):
         """
         return self.tokenizer.post_process_generation(*args, **kwargs)
 
-
-__getattr__ = deprecate_attr(__name__, rename={"NougatProcessorKwargs": (ProcessingKwargs, "5.29.0")})
 
 __all__ = ["NougatProcessor"]

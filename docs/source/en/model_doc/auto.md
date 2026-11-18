@@ -16,20 +16,26 @@ rendered properly in your Markdown viewer.
 
 # Auto classes
 
-In many cases, the architecture to use can be inferred from the name or path of the pretrained model provided to the `from_pretrained()` method.
-Instantiating [`AutoConfig`], [`AutoModel`], or [`AutoTokenizer`] automatically creates the appropriate architecture class. For example:
+In many cases, the architecture you want to use can be guessed from the name or the path of the pretrained model you
+are supplying to the `from_pretrained()` method. AutoClasses are here to do this job for you so that you
+automatically retrieve the relevant model given the name/path to the pretrained weights/config/vocabulary.
+
+Instantiating one of [`AutoConfig`], [`AutoModel`], and
+[`AutoTokenizer`] will directly create a class of the relevant architecture. For instance
 
 ```python
 model = AutoModel.from_pretrained("google-bert/bert-base-cased", device_map="auto")
 ```
 
-This creates a model instance of [`BertModel`].
+will create a model that is an instance of [`BertModel`].
 
-Each task has a corresponding `AutoModel` class.
+There is one class of `AutoModel` for each task.
 
 ## Extending the Auto Classes
 
-Each auto class provides a method that allows it to be extended with custom classes. For example, if you define a custom model class `NewModel`, ensure that you also define a corresponding `NewModelConfig`. You can then register them with the auto classes as shown below:
+Each of the auto classes has a method to be extended with your custom classes. For instance, if you have defined a
+custom class of model `NewModel`, make sure you have a `NewModelConfig` then you can add those to the auto
+classes like this:
 
 ```python
 from transformers import AutoConfig, AutoModel
@@ -39,7 +45,7 @@ AutoConfig.register("new-model", NewModelConfig)
 AutoModel.register(NewModelConfig, NewModel)
 ```
 
-You can then use the auto classes as you normally would.
+You will then be able to use the auto classes like you would usually do!
 
 <Tip warning={true}>
 
@@ -69,8 +75,6 @@ Likewise, if your `NewModel` is a subclass of [`PreTrainedModel`], make sure its
 [[autodoc]] AutoImageProcessor
 
 ## AutoVideoProcessor
-
-See [Video processor backends](../main_classes/video_processor#video-processor-backends) for backend selection, custom registration, and saving and reloading.
 
 [[autodoc]] AutoVideoProcessor
 
@@ -289,10 +293,6 @@ The following auto classes are available for the following multimodal tasks.
 ### AutoModelForImageTextToText
 
 [[autodoc]] AutoModelForImageTextToText
-
-### AutoModelForDecision
-
-[[autodoc]] AutoModelForDecision
 
 ## Time Series
 

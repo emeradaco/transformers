@@ -24,11 +24,10 @@ from ...cache_utils import Cache, DynamicCache
 from ...configuration_utils import PreTrainedConfig
 from ...masking_utils import create_causal_mask, create_masks_for_generate
 from ...modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
-from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel, slice_logits_to_keep
+from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from ...processing_utils import Unpack
 from ...utils import auto_docstring, logging
-from ...utils.deprecation import deprecate_kwarg
-from ...utils.generic import TransformersKwargs, is_flash_attention_requested
+from ...utils.generic import TransformersKwargs, is_flash_attention_requested, split_attention_implementation
 from ..llama.configuration_llama import LlamaConfig
 from ..llama.modeling_llama import (
     LlamaAttention,
@@ -129,7 +128,8 @@ class HrmTextConfig(LlamaConfig):
     @_attn_implementation.setter
     def _attn_implementation(self, value: str | dict | None):
         if value is not None and self.prefix_lm:
-            if is_flash_attention_requested(requested_attention_implementation=value):
+            _, base_implementation = split_attention_implementation(value)
+            if is_flash_attention_requested(requested_attention_implementation=base_implementation):
                 raise ValueError(
                     f"`attn_implementation={value!r}` is not supported when "
                     "`config.prefix_lm=True`: FlashAttention cannot represent the PrefixLM 4-D mask "
@@ -167,13 +167,12 @@ class HrmTextAttention(LlamaAttention):
             bias=config.attention_bias,
         )
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         hidden_states: torch.Tensor,
         position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
         attention_mask: torch.Tensor | None = None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         cycle_offset: int = 0,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -188,11 +187,9 @@ class HrmTextAttention(LlamaAttention):
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-        if cache is not None:
+        if past_key_values is not None:
             # Adjust cache slot by `cycle_offset` which is determined by it's current recurrent step through the stacks
-            key_states, value_states = cache.update(
-                key_states, value_states, self.layer_idx + cycle_offset, kwargs=kwargs
-            )
+            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx + cycle_offset)
 
         attention_interface: Callable = ALL_ATTENTION_FUNCTIONS.get_interface(
             self.config._attn_implementation, eager_attention_forward
@@ -232,12 +229,11 @@ class HrmTextStack(nn.Module):
         )
         self.final_norm = HrmTextRMSNorm(eps=config.rms_norm_eps)
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
         cycle_offset: int = 0,
         **kwargs: Unpack[TransformersKwargs],
@@ -246,7 +242,7 @@ class HrmTextStack(nn.Module):
             hidden_states = layer(
                 hidden_states,
                 attention_mask=attention_mask,
-                cache=cache,
+                past_key_values=past_key_values,
                 position_embeddings=position_embeddings,
                 cycle_offset=cycle_offset,
                 **kwargs,
@@ -262,7 +258,8 @@ class HrmTextPreTrainedModel(LlamaPreTrainedModel):
         self, attn_implementation: str | None, is_init_check: bool = False, allow_all_kernels: bool = False
     ) -> str:
         if attn_implementation is not None and self.config.prefix_lm:
-            if is_flash_attention_requested(requested_attention_implementation=attn_implementation):
+            _, base_implementation = split_attention_implementation(attn_implementation)
+            if is_flash_attention_requested(requested_attention_implementation=base_implementation):
                 raise ValueError(
                     f"`attn_implementation={attn_implementation!r}` is not supported when "
                     "`config.prefix_lm=True`: FlashAttention cannot represent the PrefixLM 4-D mask "
@@ -272,6 +269,7 @@ class HrmTextPreTrainedModel(LlamaPreTrainedModel):
             self, attn_implementation, is_init_check, allow_all_kernels
         )
 
+    @torch.no_grad()
     def _init_weights(self, module):
         PreTrainedModel._init_weights(self, module)
         if isinstance(module, HrmTextModel):
@@ -298,15 +296,14 @@ class HrmTextModel(LlamaModel):
         raw_bp = list(config.L_bp_cycles)
         self.L_bp_cycles_padded = [1] * max(0, config.H_cycles - len(raw_bp)) + raw_bp
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         token_type_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         use_cache: bool | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithPast:
@@ -323,11 +320,11 @@ class HrmTextModel(LlamaModel):
         # Additional scaling on the input embeds
         inputs_embeds = inputs_embeds * self.embedding_scale
 
-        if use_cache and cache is None:
-            cache = DynamicCache(config=self.config)
+        if use_cache and past_key_values is None:
+            past_key_values = DynamicCache(config=self.config)
 
         if position_ids is None:
-            past_seen_tokens = cache.get_seq_length() if cache is not None else 0
+            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             position_ids = torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device) + past_seen_tokens
             position_ids = position_ids.unsqueeze(0)
 
@@ -336,10 +333,10 @@ class HrmTextModel(LlamaModel):
             "config": self.config,
             "inputs_embeds": inputs_embeds,
             "attention_mask": attention_mask,
-            "cache": cache,
+            "past_key_values": past_key_values,
             "position_ids": position_ids,
         }
-        is_first_iteration = cache is None or not cache.is_initialized
+        is_first_iteration = past_key_values is None or not past_key_values.is_initialized
         if token_type_ids is not None and is_first_iteration:
             if self.config.prefix_lm:
                 mask_kwargs["block_sequence_ids"] = torch.where(token_type_ids == 1, 0, -1)
@@ -384,7 +381,7 @@ class HrmTextModel(LlamaModel):
                     hidden_states_low_cycle = self.L_module(
                         hidden_states_low_cycle.to(hidden_states_high_cycle.device) + hidden_states_high_cycle,
                         attention_mask=attention_mask,
-                        cache=cache,
+                        past_key_values=past_key_values,
                         position_embeddings=position_embeddings,
                         position_ids=position_ids,
                         cycle_offset=cycle_offset,
@@ -396,7 +393,7 @@ class HrmTextModel(LlamaModel):
             hidden_states_high_cycle = self.H_module(
                 hidden_states_high_cycle + hidden_states_low_cycle.to(hidden_states_high_cycle.device),
                 attention_mask=attention_mask,
-                cache=cache,
+                past_key_values=past_key_values,
                 position_embeddings=position_embeddings,
                 position_ids=position_ids,
                 cycle_offset=cycle_offset,
@@ -405,19 +402,18 @@ class HrmTextModel(LlamaModel):
 
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states_high_cycle,
-            cache=cache,
+            past_key_values=past_key_values,
         )
 
 
 @auto_docstring
 class HrmTextForCausalLM(LlamaForCausalLM):
     @staticmethod
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def create_masks_for_generate(
         config: PreTrainedConfig,
         inputs_embeds: torch.Tensor,
         attention_mask: torch.Tensor | None,
-        cache: Cache | None,
+        past_key_values: Cache | None,
         position_ids: torch.Tensor | None,
         token_type_ids: torch.Tensor | None = None,
         is_first_iteration: bool | None = False,
@@ -427,7 +423,7 @@ class HrmTextForCausalLM(LlamaForCausalLM):
             "config": config,
             "inputs_embeds": inputs_embeds,
             "attention_mask": attention_mask,
-            "cache": cache,
+            "past_key_values": past_key_values,
             "position_ids": position_ids,
         }
         if token_type_ids is not None and is_first_iteration:
@@ -438,15 +434,14 @@ class HrmTextForCausalLM(LlamaForCausalLM):
 
         return create_masks_for_generate(**mask_kwargs)
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         token_type_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
         logits_to_keep: int | torch.Tensor = 0,
@@ -461,7 +456,7 @@ class HrmTextForCausalLM(LlamaForCausalLM):
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             token_type_ids=token_type_ids,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
@@ -469,8 +464,8 @@ class HrmTextForCausalLM(LlamaForCausalLM):
         )
 
         hidden_states = outputs.last_hidden_state
-        hidden_states = slice_logits_to_keep(hidden_states, logits_to_keep)
-        logits = self.lm_head(hidden_states)
+        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+        logits = self.lm_head(hidden_states[:, slice_indices, :])
 
         loss = None
         if labels is not None:
@@ -479,7 +474,7 @@ class HrmTextForCausalLM(LlamaForCausalLM):
         return CausalLMOutputWithPast(
             loss=loss,
             logits=logits,
-            cache=outputs.cache,
+            past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )

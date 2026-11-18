@@ -36,13 +36,11 @@ env:
   # This token is created under the bot `hf-transformers-bot`.
   HF_TOKEN: ${{ secrets.HF_HUB_READ_TOKEN }}
 
-
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   benchmark-v2:
-    permissions:
-      contents: read
     name: Benchmark v2
     runs-on: ${{ inputs.runner }}
     if: |

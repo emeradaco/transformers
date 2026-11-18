@@ -23,7 +23,7 @@ from ...modeling_layers import (
     GenericForSequenceClassification,
 )
 from ...modeling_rope_utils import ROPE_INIT_FUNCTIONS
-from ...utils.deprecation import deprecate_kwarg
+from ...utils.generic import maybe_autocast
 from ...utils.output_capturing import OutputRecorder
 from ..llama.modeling_llama import LlamaAttention
 from ..mixtral.modeling_mixtral import (
@@ -38,7 +38,7 @@ from .configuration_phimoe import PhimoeConfig
 
 
 class PhimoeRotaryEmbedding(MixtralRotaryEmbedding):
-    def __init__(self, config: PhimoeConfig):
+    def __init__(self, config: PhimoeConfig, device=None):
         nn.Module.__init__()
         self.max_seq_len_cached = config.max_position_embeddings
         self.original_max_seq_len = config.max_position_embeddings
@@ -48,7 +48,7 @@ class PhimoeRotaryEmbedding(MixtralRotaryEmbedding):
         self.rope_init_fn: Callable = self.compute_default_rope_parameters
         if self.rope_type != "default":
             self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
-        inv_freq, self.attention_scaling = self.rope_init_fn(self.config)
+        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
 
         self.inv_freq = nn.Buffer(inv_freq, persistent=False)
         self.original_inv_freq = nn.Buffer(inv_freq.clone(), persistent=False)
@@ -64,10 +64,17 @@ class PhimoeRotaryEmbedding(MixtralRotaryEmbedding):
             )
         inv_freq, attention_scaling = self.rope_init_fn(self.config)
         mscale = attention_scaling if mscale is None else mscale
-        freqs = position_ids[..., None].float() * inv_freq.to(device=x.device, dtype=torch.float)
-        emb = torch.cat((freqs, freqs), dim=-1)
-        cos = emb.cos() * mscale
-        sin = emb.sin() * mscale
+        inv_freq_expanded = (
+            inv_freq[None, :, None].expand(position_ids.shape[0], -1, 1).to(dtype=torch.float, device=x.device)
+        )
+        position_ids_expanded = position_ids[:, None, :].float()
+
+        device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
+        with maybe_autocast(device_type=device_type, enabled=False):  # Force float32
+            freqs = (inv_freq_expanded @ position_ids_expanded).transpose(1, 2)
+            emb = torch.cat((freqs, freqs), dim=-1)
+            cos = emb.cos() * mscale
+            sin = emb.sin() * mscale
         return cos.to(x.dtype), sin.to(x.dtype)
 
 
@@ -346,15 +353,15 @@ class PhimoeModel(MixtralModel):
 
 
 class PhimoeForCausalLM(MixtralForCausalLM):
-    def __init__(self, config: PhimoeConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=self.config.lm_head_bias)
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
+    # Copied from transformers.models.phi3.modeling_phi3.Phi3ForCausalLM.prepare_inputs_for_generation
     def prepare_inputs_for_generation(
         self,
         input_ids,
-        cache=None,
+        past_key_values=None,
         attention_mask=None,
         inputs_embeds=None,
         position_ids=None,
@@ -368,18 +375,17 @@ class PhimoeForCausalLM(MixtralForCausalLM):
         # When the first time input length reached long and short factor switching point, enforce re-compute cache
         # It will cause downside of slower at this single token position, however, better than current failure.
         if (
-            cache
+            past_key_values
             and hasattr(self.config, "original_max_position_embeddings")
             and input_ids.shape[1] >= self.config.original_max_position_embeddings + 1
         ):
-            past_length = cache.get_seq_length()
+            past_length = past_key_values.get_seq_length()
             if past_length <= self.config.original_max_position_embeddings:
-                cache = None
-                kwargs["next_sequence_length"] = None
+                past_key_values = None
 
         model_inputs = super().prepare_inputs_for_generation(
             input_ids=input_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             attention_mask=attention_mask,
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,

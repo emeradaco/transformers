@@ -340,6 +340,7 @@ class VitPoseBackbonePreTrainedModel(PreTrainedModel):
         "attentions": VitPoseBackboneSelfAttention,
     }
 
+    @torch.no_grad()
     def _init_weights(self, module: nn.Linear | nn.Conv2d | nn.LayerNorm | VitPoseBackboneEmbeddings):
         """Initialize the weights"""
         super()._init_weights(module)

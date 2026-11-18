@@ -23,9 +23,6 @@ from ...modeling_outputs import MoeModelOutputWithPast
 from ...modeling_utils import PreTrainedModel
 from ...processing_utils import Unpack
 from ...utils import TransformersKwargs, logging
-from ...utils.deprecation import deprecate_kwarg
-from ...utils.output_capturing import OutputRecorder
-from ..deepseek_v2.modeling_deepseek_v2 import DeepseekV2ForCausalLM
 from ..lfm2.modeling_lfm2 import (
     Lfm2Attention,
     Lfm2DecoderLayer,
@@ -33,7 +30,7 @@ from ..lfm2.modeling_lfm2 import (
     Lfm2RotaryEmbedding,
     Lfm2ShortConv,
 )
-from ..llama.modeling_llama import LlamaPreTrainedModel, LlamaRMSNorm
+from ..llama.modeling_llama import LlamaForCausalLM, LlamaPreTrainedModel, LlamaRMSNorm
 from ..mixtral.modeling_mixtral import MixtralModel
 from ..qwen2_moe.modeling_qwen2_moe import Qwen2MoeExperts, Qwen2MoeTopKRouter
 from ..qwen3_moe.modeling_qwen3_moe import Qwen3MoeSparseMoeBlock
@@ -124,12 +121,7 @@ class Lfm2MoeDecoderLayer(Lfm2DecoderLayer):
 
 
 class Lfm2MoePreTrainedModel(LlamaPreTrainedModel):
-    _can_record_outputs = {
-        "hidden_states": Lfm2MoeDecoderLayer,
-        "attentions": Lfm2MoeAttention,
-        "router_logits": OutputRecorder(Lfm2MoeTopKRouter, index=0),
-    }
-
+    @torch.no_grad()
     def _init_weights(self, module):
         PreTrainedModel._init_weights(self, module)
         if isinstance(module, Lfm2MoeExperts):
@@ -150,14 +142,13 @@ class Lfm2MoeModel(MixtralModel):
         del self.norm
         del self.rotary_emb
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         use_cache: bool | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> MoeModelOutputWithPast:
@@ -167,11 +158,11 @@ class Lfm2MoeModel(MixtralModel):
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
-        if use_cache and cache is None:
-            cache = DynamicCache(config=self.config)
+        if use_cache and past_key_values is None:
+            past_key_values = DynamicCache(config=self.config)
 
         if position_ids is None:
-            past_seen_tokens = cache.get_seq_length() if cache is not None else 0
+            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             position_ids = torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device) + past_seen_tokens
             position_ids = position_ids.unsqueeze(0)
 
@@ -180,7 +171,7 @@ class Lfm2MoeModel(MixtralModel):
                 "config": self.config,
                 "inputs_embeds": inputs_embeds,
                 "attention_mask": attention_mask,
-                "cache": cache,
+                "past_key_values": past_key_values,
                 "position_ids": position_ids,
             }
             causal_mask_mapping = {
@@ -197,7 +188,7 @@ class Lfm2MoeModel(MixtralModel):
                 hidden_states,
                 attention_mask=causal_mask_mapping[self.config.layer_types[i]],
                 position_ids=position_ids,
-                cache=cache,
+                past_key_values=past_key_values,
                 position_embeddings=position_embeddings,
                 **kwargs,
             )
@@ -206,11 +197,11 @@ class Lfm2MoeModel(MixtralModel):
 
         return MoeModelOutputWithPast(
             last_hidden_state=hidden_states,
-            cache=cache,
+            past_key_values=past_key_values,
         )
 
 
-class Lfm2MoeForCausalLM(DeepseekV2ForCausalLM):
+class Lfm2MoeForCausalLM(LlamaForCausalLM):
     pass
 
 

@@ -490,8 +490,9 @@ Pentru mai multe informații despre verificările rulate pe un pull request, aru
 
 ### Teste
 
-O suită extinsă de teste este inclusă pentru a testa comportamentul bibliotecii. Testele de bibliotecă se găsesc în
-folder-ul [tests](https://github.com/huggingface/transformers/tree/main/tests).
+O suită extinsă de teste este inclusă pentru a testa comportamentul bibliotecii și mai multe exemple. Testele de bibliotecă se găsesc în
+folder-ul [tests](https://github.com/huggingface/transformers/tree/main/tests) și testele de exemple în
+folder-ul [examples](https://github.com/huggingface/transformers/tree/main/examples).
 
 Preferăm `pytest` și `pytest-xdist` deoarece este mai rapid. Din root-ul
 repository-ului, specifică un *path către un subfolder sau un fișier de test* pentru a rula testul:
@@ -500,7 +501,14 @@ repository-ului, specifică un *path către un subfolder sau un fișier de test*
 python -m pytest -n auto --dist=loadfile -s -v ./tests/models/my_new_model
 ```
 
-De fapt, acesta este modul în care comanda noastră `make test` este implementată!
+Similar, pentru directorul `examples`, specifică o *cale către un subfolder sau fișier de test* pentru a rula testul. De exemplu, următoarea comandă testează subfolderul de clasificare text din directorul PyTorch `examples`:
+
+```bash
+pip install -r examples/xxx/requirements.txt  # necesar doar prima dată
+python -m pytest -n auto --dist=loadfile -s -v ./examples/pytorch/text-classification
+```
+
+De fapt, acesta este modul în care comenzile noastre `make test` și `make test-examples` sunt implementate (fără a include `pip install`)!
 
 Poți, de asemenea, să specifici un set mai mic de teste pentru a testa doar funcția la care lucrezi.
 
@@ -510,12 +518,13 @@ ai suficient spațiu pe disc, o conexiune bună la internet sau multă răbdare!
 
 <Tip warning={true}>
 
-Ține minte să specifici un *path către un subfolder sau un fișier de test* pentru a rula testul. Altfel, vei rula toate testele din folderul `tests`, ceea ce va dura foarte mult timp!
+Ține minte să specifici un *path către un subfolder sau un fișier de test* pentru a rula testul. Altfel, vei rula toate testele din folderul `tests` sau `examples`, ceea ce va dura foarte mult timp!
 
 </Tip>
 
 ```bash
 RUN_SLOW=yes python -m pytest -n auto --dist=loadfile -s -v ./tests/models/my_new_model
+RUN_SLOW=yes python -m pytest -n auto --dist=loadfile -s -v ./examples/pytorch/text-classification
 ```
 
 Ca și testele lente, există și alte variabile de mediu disponibile care nu sunt activate implicit în timpul testării:
@@ -532,6 +541,7 @@ Aceasta înseamnă că `unittest` este suportat în totalitate. Iată cum să ru
 
 ```bash
 python -m unittest discover -s tests -t . -v
+python -m unittest discover -s examples -t examples -v
 ```
 
 ### Ghid de stil

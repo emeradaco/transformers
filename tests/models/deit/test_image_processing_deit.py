@@ -21,12 +21,49 @@ from ...test_image_processing_common import ImageProcessingTester, ImageProcessi
 
 
 class DeiTImageProcessingTester(ImageProcessingTester):
-    def __init__(self, **kwargs):
-        # Image processor init kwargs
-        kwargs.setdefault("size", {"height": 20, "width": 20})
-        kwargs.setdefault("crop_size", {"height": 18, "width": 18})
+    def __init__(
+        self,
+        parent,
+        batch_size=7,
+        num_channels=3,
+        image_size=18,
+        min_resolution=30,
+        max_resolution=400,
+        do_resize=True,
+        size=None,
+        do_center_crop=True,
+        crop_size=None,
+        do_normalize=True,
+        image_mean=[0.5, 0.5, 0.5],
+        image_std=[0.5, 0.5, 0.5],
+    ):
+        size = size if size is not None else {"height": 20, "width": 20}
+        crop_size = crop_size if crop_size is not None else {"height": 18, "width": 18}
 
-        super().__init__(**kwargs)
+        self.parent = parent
+        self.batch_size = batch_size
+        self.num_channels = num_channels
+        self.image_size = image_size
+        self.min_resolution = min_resolution
+        self.max_resolution = max_resolution
+        self.do_resize = do_resize
+        self.size = size
+        self.do_center_crop = do_center_crop
+        self.crop_size = crop_size
+        self.do_normalize = do_normalize
+        self.image_mean = image_mean
+        self.image_std = image_std
+
+    def prepare_image_processor_dict(self):
+        return {
+            "do_resize": self.do_resize,
+            "size": self.size,
+            "do_center_crop": self.do_center_crop,
+            "crop_size": self.crop_size,
+            "do_normalize": self.do_normalize,
+            "image_mean": self.image_mean,
+            "image_std": self.image_std,
+        }
 
 
 @require_torch
@@ -34,4 +71,31 @@ class DeiTImageProcessingTester(ImageProcessingTester):
 class DeiTImageProcessingTest(ImageProcessingTestMixin, unittest.TestCase):
     test_cast_dtype = True
 
-    image_processor_tester_class = DeiTImageProcessingTester
+    def setUp(self):
+        super().setUp()
+        self.image_processor_tester = DeiTImageProcessingTester(self)
+
+    @property
+    def image_processor_dict(self):
+        return self.image_processor_tester.prepare_image_processor_dict()
+
+    def test_image_processor_properties(self):
+        for image_processing_class in self.image_processing_classes.values():
+            image_processing = image_processing_class(**self.image_processor_dict)
+            self.assertTrue(hasattr(image_processing, "do_resize"))
+            self.assertTrue(hasattr(image_processing, "size"))
+            self.assertTrue(hasattr(image_processing, "do_center_crop"))
+            self.assertTrue(hasattr(image_processing, "center_crop"))
+            self.assertTrue(hasattr(image_processing, "do_normalize"))
+            self.assertTrue(hasattr(image_processing, "image_mean"))
+            self.assertTrue(hasattr(image_processing, "image_std"))
+
+    def test_image_processor_from_dict_with_kwargs(self):
+        for image_processing_class in self.image_processing_classes.values():
+            image_processor = image_processing_class.from_dict(self.image_processor_dict)
+            self.assertEqual(image_processor.size, {"height": 20, "width": 20})
+            self.assertEqual(image_processor.crop_size, {"height": 18, "width": 18})
+
+            image_processor = image_processing_class.from_dict(self.image_processor_dict, size=42, crop_size=84)
+            self.assertEqual(image_processor.size, {"height": 42, "width": 42})
+            self.assertEqual(image_processor.crop_size, {"height": 84, "width": 84})

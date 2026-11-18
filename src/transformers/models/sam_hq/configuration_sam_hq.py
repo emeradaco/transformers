@@ -35,7 +35,6 @@ class SamHQPromptEncoderConfig(PreTrainedConfig):
     """
 
     base_config_key = "prompt_encoder_config"
-    model_type = "sam_hq_prompt_encoder"
 
     hidden_size: int = 256
     image_size: int | list[int] | tuple[int, int] = 1024
@@ -134,7 +133,6 @@ class SamHQMaskDecoderConfig(PreTrainedConfig):
     """
 
     base_config_key = "mask_decoder_config"
-    model_type = "sam_hq_mask_decoder"
 
     hidden_size: int = 256
     hidden_act: str = "relu"
@@ -161,7 +159,7 @@ class SamHQConfig(PreTrainedConfig):
     """
 
     model_type = "sam_hq"
-    sub_configs_defaults = {
+    sub_configs = {
         "prompt_encoder_config": SamHQPromptEncoderConfig,
         "mask_decoder_config": SamHQMaskDecoderConfig,
         "vision_config": SamHQVisionConfig,
@@ -172,6 +170,24 @@ class SamHQConfig(PreTrainedConfig):
     mask_decoder_config: dict | PreTrainedConfig | None = None
     initializer_range: float = 0.02
     tie_word_embeddings: bool = True
+
+    def __post_init__(self, **kwargs):
+        if isinstance(self.vision_config, dict):
+            self.vision_config = SamHQVisionConfig(**self.vision_config)
+        elif self.vision_config is None:
+            self.vision_config = SamHQVisionConfig()
+
+        if isinstance(self.prompt_encoder_config, dict):
+            self.prompt_encoder_config = SamHQPromptEncoderConfig(**self.prompt_encoder_config)
+        elif self.prompt_encoder_config is None:
+            self.prompt_encoder_config = SamHQPromptEncoderConfig()
+
+        if isinstance(self.mask_decoder_config, dict):
+            self.mask_decoder_config = SamHQMaskDecoderConfig(**self.mask_decoder_config)
+        elif self.mask_decoder_config is None:
+            self.mask_decoder_config = SamHQMaskDecoderConfig()
+
+        super().__post_init__(**kwargs)
 
 
 __all__ = ["SamHQVisionConfig", "SamHQMaskDecoderConfig", "SamHQPromptEncoderConfig", "SamHQConfig"]

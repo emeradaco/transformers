@@ -222,7 +222,7 @@ class TextNetPreTrainedModel(PreTrainedModel):
 
 @auto_docstring
 class TextNetModel(TextNetPreTrainedModel):
-    def __init__(self, config: TextNetConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.stem = TextNetConvLayer(config)
         self.encoder = TextNetEncoder(config)
@@ -269,7 +269,7 @@ class TextNetModel(TextNetPreTrainedModel):
     """
 )
 class TextNetForImageClassification(TextNetPreTrainedModel):
-    def __init__(self, config: TextNetConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.textnet = TextNetModel(config)
@@ -286,17 +286,22 @@ class TextNetForImageClassification(TextNetPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        pixel_values: torch.Tensor | None = None,
+        pixel_values: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         output_hidden_states: bool | None = None,
         return_dict: bool | None = None,
         **kwargs,
     ) -> ImageClassifierOutputWithNoAttention:
         r"""
+        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+            Labels for computing the image classification/regression loss. Indices should be in `[0, ...,
+            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
+            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
+
         Examples:
         ```python
         >>> import torch
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
         >>> from transformers import TextNetForImageClassification, TextNetImageProcessor
         >>> from PIL import Image
@@ -341,7 +346,7 @@ class TextNetForImageClassification(TextNetPreTrainedModel):
 class TextNetBackbone(BackboneMixin, TextNetPreTrainedModel):
     has_attentions = False
 
-    def __init__(self, config: TextNetConfig):
+    def __init__(self, config):
         super().__init__(config)
 
         self.textnet = TextNetModel(config)
@@ -365,7 +370,7 @@ class TextNetBackbone(BackboneMixin, TextNetPreTrainedModel):
 
         ```python
         >>> import torch
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
         >>> from PIL import Image
         >>> from transformers import AutoImageProcessor, AutoBackbone

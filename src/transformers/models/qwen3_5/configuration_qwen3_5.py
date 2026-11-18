@@ -19,7 +19,7 @@
 # limitations under the License.
 from huggingface_hub.dataclasses import strict
 
-from ...configuration_utils import PreTrainedConfig
+from ...configuration_utils import PreTrainedConfig, remap_legacy_layer_types
 from ...modeling_rope_utils import RopeParameters
 from ...utils import auto_docstring
 
@@ -54,7 +54,7 @@ class Qwen3_5TextConfig(PreTrainedConfig):
     """
 
     model_type = "qwen3_5_text"
-    keys_to_ignore_at_inference = ["cache"]
+    keys_to_ignore_at_inference = ["past_key_values"]
 
     base_model_tp_plan = {
         "layers.*.self_attn.q_proj": "colwise",
@@ -115,6 +115,8 @@ class Qwen3_5TextConfig(PreTrainedConfig):
                 "linear_attention" if bool((i + 1) % interval_pattern) else "full_attention"
                 for i in range(self.num_hidden_layers)
             ]
+        else:
+            self.layer_types = remap_legacy_layer_types(self.layer_types)
 
         super().__post_init__(**kwargs)
 
@@ -132,7 +134,7 @@ class Qwen3_5VisionConfig(PreTrainedConfig):
     model_type = "qwen3_5_vision"
     base_config_key = "vision_config"
     default_rope_type = "axial"
-    attribute_map = {"num_attention_heads": "num_heads", "num_hidden_layers": "depth"}
+    attribute_map = {"num_attention_heads": "num_heads"}
 
     depth: int = 27
     hidden_size: int = 1152
@@ -169,11 +171,8 @@ class Qwen3_5Config(PreTrainedConfig):
     ```"""
 
     model_type = "qwen3_5"
-    sub_configs_defaults = {
-        "vision_config": Qwen3_5VisionConfig,
-        "text_config": Qwen3_5TextConfig,
-    }
-    keys_to_ignore_at_inference = ["cache"]
+    sub_configs = {"vision_config": Qwen3_5VisionConfig, "text_config": Qwen3_5TextConfig}
+    keys_to_ignore_at_inference = ["past_key_values"]
 
     text_config: dict | PreTrainedConfig | None = None
     vision_config: dict | PreTrainedConfig | None = None
@@ -185,9 +184,19 @@ class Qwen3_5Config(PreTrainedConfig):
     tie_word_embeddings: bool = False
 
     def __post_init__(self, **kwargs):
-        if isinstance(self.vision_config, dict) and self.vision_config.get("model_type") == "qwen3_5":
+        if isinstance(self.vision_config, dict):
             # old ckpt with incorrect model type -> override manually
-            self.vision_config["model_type"] = "qwen3_5_vision"
+            if self.vision_config.get("model_type") == "qwen3_5":
+                self.vision_config["model_type"] = "qwen3_5_vision"
+            self.vision_config = self.sub_configs["vision_config"](**self.vision_config)
+        elif self.vision_config is None:
+            self.vision_config = self.sub_configs["vision_config"]()
+
+        if isinstance(self.text_config, dict):
+            self.text_config = self.sub_configs["text_config"](**self.text_config)
+        elif self.text_config is None:
+            self.text_config = self.sub_configs["text_config"]()
+
         super().__post_init__(**kwargs)
 
 

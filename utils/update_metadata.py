@@ -130,7 +130,6 @@ PIPELINE_TAGS_AND_AUTO_MODELS = [
     ("text-to-audio", "MODEL_FOR_TEXT_TO_SPECTROGRAM_MAPPING_NAMES", "AutoModelForTextToSpectrogram"),
     ("text-to-audio", "MODEL_FOR_TEXT_TO_WAVEFORM_MAPPING_NAMES", "AutoModelForTextToWaveform"),
     ("keypoint-matching", "MODEL_FOR_KEYPOINT_MATCHING_MAPPING_NAMES", "AutoModelForKeypointMatching"),
-    ("decision", "MODEL_FOR_DECISION_MAPPING_NAMES", "AutoModelForDecision"),
 ]
 
 
@@ -283,7 +282,7 @@ def update_metadata(token: str, commit_sha: str):
         repo_type="dataset",
         token=token,
     )
-    with open(hub_frameworks_json, encoding="utf-8") as f:
+    with open(hub_frameworks_json) as f:
         hub_frameworks_json = f.read()
 
     hub_pipeline_tags_json = hf_hub_download(
@@ -292,16 +291,16 @@ def update_metadata(token: str, commit_sha: str):
         repo_type="dataset",
         token=token,
     )
-    with open(hub_pipeline_tags_json, encoding="utf-8") as f:
+    with open(hub_pipeline_tags_json) as f:
         hub_pipeline_tags_json = f.read()
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         frameworks_dataset.to_json(os.path.join(tmp_dir, "frameworks.json"))
         tags_dataset.to_json(os.path.join(tmp_dir, "pipeline_tags.json"))
 
-        with open(os.path.join(tmp_dir, "frameworks.json"), encoding="utf-8") as f:
+        with open(os.path.join(tmp_dir, "frameworks.json")) as f:
             frameworks_json = f.read()
-        with open(os.path.join(tmp_dir, "pipeline_tags.json"), encoding="utf-8") as f:
+        with open(os.path.join(tmp_dir, "pipeline_tags.json")) as f:
             pipeline_tags_json = f.read()
 
         frameworks_equal = hub_frameworks_json == frameworks_json

@@ -39,21 +39,21 @@ logger = logging.get_logger(__name__)
 @dataclass
 class TimmWrapperModelOutput(ModelOutput):
     r"""
-    last_hidden_state (`torch.Tensor`):
+    last_hidden_state (`torch.FloatTensor`):
         The last hidden state of the model, output before applying the classification head.
-    pooler_output (`torch.Tensor`, *optional*):
+    pooler_output (`torch.FloatTensor`, *optional*):
         The pooled output derived from the last hidden state, if applicable.
-    hidden_states (`tuple(torch.Tensor)`, *optional*, returned if `output_hidden_states=True` is set or if `config.output_hidden_states=True`):
+    hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned if `output_hidden_states=True` is set or if `config.output_hidden_states=True`):
         A tuple containing the intermediate hidden states of the model at the output of each layer or specified layers.
-    attentions (`tuple(torch.Tensor)`, *optional*, returned if `output_attentions=True` is set or if `config.output_attentions=True`.):
+    attentions (`tuple(torch.FloatTensor)`, *optional*, returned if `output_attentions=True` is set or if `config.output_attentions=True`.):
         A tuple containing the intermediate attention weights of the model at the output of each layer.
         Note: Currently, Timm models do not support attentions output.
     """
 
-    last_hidden_state: torch.Tensor
-    pooler_output: torch.Tensor | None = None
-    hidden_states: tuple[torch.Tensor, ...] | None = None
-    attentions: tuple[torch.Tensor, ...] | None = None
+    last_hidden_state: torch.FloatTensor
+    pooler_output: torch.FloatTensor | None = None
+    hidden_states: tuple[torch.FloatTensor, ...] | None = None
+    attentions: tuple[torch.FloatTensor, ...] | None = None
 
 
 def _create_timm_model_with_error_handling(config: "TimmWrapperConfig", **model_kwargs):
@@ -112,6 +112,7 @@ class TimmWrapperPreTrainedModel(PreTrainedModel):
         state_dict = {f"timm_model.{k}" if "timm_model." not in k else k: v for k, v in state_dict.items()}
         return super().load_state_dict(state_dict, *args, **kwargs)
 
+    @torch.no_grad()
     def _init_weights(self, module):
         """
         Initialize weights function to properly initialize Linear layer weights.
@@ -176,7 +177,7 @@ class TimmWrapperModel(TimmWrapperPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        pixel_values: torch.Tensor,
+        pixel_values: torch.FloatTensor,
         output_attentions: bool | None = None,
         output_hidden_states: bool | list[int] | None = None,
         return_dict: bool | None = None,
@@ -302,7 +303,7 @@ class TimmWrapperForImageClassification(TimmWrapperPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        pixel_values: torch.Tensor,
+        pixel_values: torch.FloatTensor,
         labels: torch.LongTensor | None = None,
         output_attentions: bool | None = None,
         output_hidden_states: bool | list[int] | None = None,
@@ -310,6 +311,10 @@ class TimmWrapperForImageClassification(TimmWrapperPreTrainedModel):
         **kwargs,
     ) -> ImageClassifierOutput | tuple[Tensor, ...]:
         r"""
+        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+            Labels for computing the image classification/regression loss. Indices should be in `[0, ...,
+            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
+            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
         output_attentions (`bool`, *optional*):
             Whether or not to return the attentions tensors of all attention layers. Not compatible with timm wrapped models.
         output_hidden_states (`bool`, *optional*):

@@ -85,9 +85,9 @@ Chinese-CLIP モデルは、[OFA-Sys](https://huggingface.co/OFA-Sys) によっ�
 [[autodoc]] ChineseCLIPImageProcessor
     - preprocess
 
-## ChineseCLIPImageProcessorPil
+## ChineseCLIPImageProcessorFast
 
-[[autodoc]] ChineseCLIPImageProcessorPil
+[[autodoc]] ChineseCLIPImageProcessorFast
     - preprocess
 
 ## ChineseCLIPProcessor

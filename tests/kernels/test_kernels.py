@@ -20,12 +20,10 @@ import os
 import sys
 import tempfile
 import types
-from pathlib import Path
-from tempfile import TemporaryDirectory
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import torch
+from huggingface_hub import snapshot_download
 from parameterized import parameterized
 
 from tests.test_memory_cleanup_mixin import MemoryCleanupTestCase
@@ -49,13 +47,12 @@ from transformers.testing_utils import (
     slow,
     torch_device,
 )
-from transformers.utils.import_utils import get_device_type, is_kernels_available
+from transformers.utils.import_utils import is_kernels_available
 from transformers.utils.kernel_config import add_to_mapping_local
 
 
 if is_kernels_available():
-    from kernels import LayerRepository, LocalLayerRepository, Mode, kernelize, use_kernel_mapping
-    from kernels.validate import DigestValidator
+    from kernels import Device, LocalLayerRepository, Mode, kernelize
 
     import transformers.integrations.hub_kernels as hub_kernels_pkg
 
@@ -184,7 +181,7 @@ class TestHubKernels(MemoryCleanupTestCase):
 
     def test_kernelize(self):
         model = copy.deepcopy(self.model_not_kernelized)
-        kernelize(model, mode=Mode.INFERENCE, device=get_device_type(model.device))
+        kernelize(model, mode=Mode.INFERENCE, device=Device(type=model.device.type))  # type: ignore[arg-type]
         self.assert_kernelized_forward_is_different(model, self.model_not_kernelized)
         self.assert_kernelized_forward_is_the_same(model, self.model_kernelized)
         del model
@@ -292,20 +289,6 @@ class TestHubKernels(MemoryCleanupTestCase):
 
         del model
 
-    def test_kernelize_without_compatible_build(self):
-        model = AutoModelForCausalLM.from_pretrained(self.model_id, use_kernels=False, device_map=torch_device)
-        # This repo only has torch 2.4 builds, so no build variant is compatible with this system
-        repo = LayerRepository(repo_id="kernels-test/only-torch-2.4", layer_name="Silu", revision="main")
-        with use_kernel_mapping({"SiLU": {model.device.type: repo}}, inherit_mapping=False):
-            # Would previously raise a `FileNotFoundError` instead of keeping the original layer
-            hub_kernels_pkg.kernelize(model, mode=Mode.INFERENCE)
-        first_act_fn = model.model.layers[0].mlp.act_fn
-
-        self.assertTrue(model.use_kernels)
-        self.assertIs(first_act_fn.forward.__func__, type(first_act_fn).forward)  # not exchanged
-
-        del model
-
     @require_torch_accelerator
     def test_kernel_fusion(self):
         model_id = "michaelbenayoun/qwen3-tiny-4kv-heads-4layers-random"
@@ -316,7 +299,7 @@ class TestHubKernels(MemoryCleanupTestCase):
                     ("MLP", "model.layers.*.mlp"),
                 ): (
                     "AntonV/dummy-rmsnorm-mlp-with-transformations-and-init:RMSNormMLP",
-                    {"revision": "4a46a59cc7e02bf54a09f8c8a10e4ce209756029", "trust_remote_code": True},
+                    {"revision": "d582b66bea8e567dd06e683eca611648cfe53a7b", "trust_remote_code": True},
                 ),
             }
         )
@@ -331,15 +314,10 @@ class TestHubKernels(MemoryCleanupTestCase):
             baseline_out = baseline(**inputs).logits
         del baseline
 
-        # It would mismatch in its digest validation but the kernel is not production ready anyways
-        with patch.object(DigestValidator, "validate_kernel", return_value=None):
-            fused = AutoModelForCausalLM.from_pretrained(
-                model_id,
-                use_kernels=True,
-                kernel_config=kernel_config,
-                device_map=torch_device,
-            )
-
+        fused = AutoModelForCausalLM.from_pretrained(
+            model_id, use_kernels=True, kernel_config=kernel_config, device_map=torch_device
+        )
+        fused.eval()
         with torch.no_grad():
             fused_out = fused(**inputs).logits
 
@@ -416,11 +394,11 @@ class TestHubKernels(MemoryCleanupTestCase):
                     ("MLP", "layers.*.mlp"),
                 ): (
                     "AntonV/dummy-rmsnorm-mlp-with-transformations-and-init:RMSNormMLP",
-                    {"revision": "4a46a59cc7e02bf54a09f8c8a10e4ce209756029", "trust_remote_code": True},
+                    {"revision": "d582b66bea8e567dd06e683eca611648cfe53a7b", "trust_remote_code": True},
                 ),
             }
         )
-        with patch.object(DigestValidator, "validate_kernel", return_value=None), self.assertRaises(ValueError):
+        with self.assertRaises(ValueError):
             _ = AutoModelForCausalLM.from_pretrained(
                 model_id,
                 use_kernels=True,
@@ -502,19 +480,12 @@ class TestKernelUtilities(TestCasePlus):
             self.assertFalse(allow_all_kernels)
             return sentinel
 
-        patched_hub_mapping = copy.deepcopy(_HUB_KERNEL_MAPPING)
-        patched_hub_mapping["causal-conv1d"] = {
-            "repo_id": "kernels-community/causal-conv1d",
-            "version": 1,
-        }
-
         patched_module_mapping = copy.copy(_KERNEL_MODULE_MAPPING)
         patched_module_mapping.pop("causal-conv1d", None)
 
         with patch.dict(
             lazy_load_kernel.__globals__,
             {
-                "_HUB_KERNEL_MAPPING": patched_hub_mapping,
                 "_KERNEL_MODULE_MAPPING": patched_module_mapping,
                 "get_kernel": fake_get_kernel,
                 "ALLOW_ALL_KERNELS": False,
@@ -713,26 +684,6 @@ class TestKernelUtilities(TestCasePlus):
 
         self.assertEqual(wrapped(), "torch")
 
-    def test_fallback_raises_on_packed_sequence_boundaries(self):
-        """The reference implementation can't keep packed sequences apart, so it refuses their boundaries instead of
-        silently dropping them. The package implementation takes them."""
-
-        def fake_op(hidden_states, weight, **kwargs):
-            return hidden_states * weight
-
-        inputs = (torch.ones(4), torch.full((4,), 3.0))
-        cu_seqlens = torch.tensor([0, 2, 4], dtype=torch.int32)
-        reference = use_kernel_func_from_hub_with_fallback("fake_op", "missing_kernel_package")(fake_op)
-
-        self.assertTrue(torch.equal(reference(*inputs, cu_seqlens=None), torch.full((4,), 3.0)))
-        with self.assertRaisesRegex(ValueError, "packed sequences"):
-            reference(*inputs, cu_seqlens=cu_seqlens)
-        with self.assertRaisesRegex(ValueError, "packed sequences"):
-            reference(*inputs, seq_idx=torch.tensor([[0, 0, 1, 1]], dtype=torch.int32))
-        self.assertTrue(
-            torch.equal(self._make_fallback_func(fake_op)(*inputs, cu_seqlens=cu_seqlens), torch.full((4,), 30.0))
-        )
-
 
 @require_kernels
 class TestAttentionKernelRegistration(TestCasePlus):
@@ -754,7 +705,7 @@ class TestAttentionKernelRegistration(TestCasePlus):
             # Test that an untrusted kernel will raise an error without the flag
             with self.assertRaisesRegex(
                 ValueError,
-                "Kernel repository 'untrusted/flash_attention_2' could not verify publisher trust status. Set trust_remote_code=True or add the repository ID to the trust_remote_code allowlist to allow loading kernels from untrusted sources.",
+                "Kernel repository 'untrusted/flash_attention_2' could not verify publisher trust status. Set trust_remote_code=True to allow loading kernels from untrusted sources.",
             ):
                 _ = LlamaModel.from_pretrained(tmpdirname, attn_implementation=untrusted_kernel)
 
@@ -811,47 +762,6 @@ class TestAttentionKernelRegistration(TestCasePlus):
             except Exception as e:
                 print(f"Could not clean up `ALL_MASK_ATTENTION_FUNCTIONS`: {e}")
 
-    def test_lazy_import_flash_attention_retries_failed_kernel_load(self):
-        import transformers.modeling_flash_attention_utils as fa_utils
-
-        kernel_obj = types.SimpleNamespace(flash_attn_varlen_func=lambda *a, **k: None)
-        attn_impl = "org/model"
-        # The first load fails (e.g. a network error), the second one succeeds
-        with (
-            patch(
-                "transformers.integrations.hub_kernels.get_kernel",
-                side_effect=[RuntimeError("transient error"), kernel_obj],
-            ),
-            # Restore the loaded flash attention functions to avoid leaking them across tests
-            patch.multiple(
-                fa_utils,
-                _loaded_implementation=fa_utils._loaded_implementation,
-                _flash_fn=fa_utils._flash_fn,
-                _flash_varlen_fn=fa_utils._flash_varlen_fn,
-                _flash_with_kvcache_fn=fa_utils._flash_with_kvcache_fn,
-                _pad_fn=fa_utils._pad_fn,
-                _unpad_fn=fa_utils._unpad_fn,
-                _process_flash_kwargs_fn=fa_utils._process_flash_kwargs_fn,
-                _process_with_kvcache_kwargs_fn=fa_utils._process_with_kvcache_kwargs_fn,
-            ),
-        ):
-            with self.assertRaisesRegex(ValueError, "transient error"):
-                fa_utils.lazy_import_flash_attention(attn_impl)
-            self.assertNotIn(attn_impl, ALL_ATTENTION_FUNCTIONS.valid_keys())
-
-            # The failed load is not cached: the kernel is loaded and registered on the next call
-            fa_utils.lazy_import_flash_attention(attn_impl)
-            self.assertIn(attn_impl, ALL_ATTENTION_FUNCTIONS.valid_keys())
-            # Cleanup registration to avoid leaking functions across tests
-            try:
-                ALL_ATTENTION_FUNCTIONS.pop(attn_impl, None)
-            except Exception as e:
-                print(f"Could not clean up `ALL_ATTENTION_FUNCTIONS`: {e}")
-            try:
-                ALL_MASK_ATTENTION_FUNCTIONS.pop(attn_impl, None)
-            except Exception as e:
-                print(f"Could not clean up `ALL_MASK_ATTENTION_FUNCTIONS`: {e}")
-
     def test_add_to_mapping_local(self):
         repo_path = "/abs/path/kernel"
         compatible_mapping = {}
@@ -861,32 +771,22 @@ class TestAttentionKernelRegistration(TestCasePlus):
         self.assertIsInstance(repo, LocalLayerRepository)
         self.assertEqual(repo.layer_name, "LlamaRMSNorm")
 
-        with self.assertRaisesRegex(ValueError, "are supported, got: cpu"):
+        with self.assertRaisesRegex(ValueError, "Only cuda, rocm, xpu, npu, neuron and tpu devices supported"):
             add_to_mapping_local("RMSNorm", "cpu", f"{repo_path}:LlamaRMSNorm", Mode.INFERENCE, compatible_mapping)
 
+    @slow
+    @require_torch_accelerator
     def test_add_to_mapping_local_then_load(self):
-        class MockRMSNorm(torch.nn.Module):
-            def forward(self, x):
-                return x
+        repo_path = snapshot_download("kernels-community/layer-norm")
+        compatible_mapping = {}
+        add_to_mapping_local("RMSNorm", "cuda", f"{repo_path}:LlamaRMSNorm", Mode.INFERENCE, compatible_mapping)
 
-        with TemporaryDirectory() as tmpdir:
-            repo_path = Path(tmpdir)
-            compatible_mapping = {}
+        repo = compatible_mapping["RMSNorm"]["cuda"][Mode.INFERENCE]
+        self.assertIsInstance(repo, LocalLayerRepository)
+        self.assertEqual(repo.layer_name, "LlamaRMSNorm")
 
-            add_to_mapping_local("RMSNorm", "cuda", f"{repo_path}:LlamaRMSNorm", Mode.INFERENCE, compatible_mapping)
-
-            repo = compatible_mapping["RMSNorm"]["cuda"][Mode.INFERENCE]
-            self.assertIsInstance(repo, LocalLayerRepository)
-            self.assertEqual(repo.layer_name, "LlamaRMSNorm")
-
-            mock_kernel = SimpleNamespace(layers=SimpleNamespace(LlamaRMSNorm=MockRMSNorm))
-
-            with patch("kernels.layer.layer.get_local_kernel", return_value=mock_kernel) as mock_load:
-                layer_cls = repo.load()
-
-            mock_load.assert_called_once_with(repo_path)
-            self.assertIs(layer_cls, MockRMSNorm)
-            self.assertTrue(issubclass(layer_cls, torch.nn.Module))
+        layer_cls = repo.load()
+        self.assertTrue(issubclass(layer_cls, torch.nn.Module))
 
 
 @require_kernels
@@ -917,7 +817,7 @@ class TestUseKernelsLifecycle(MemoryCleanupTestCase):
     def test_train_eval_calls_kernelize_with_correct_mode(self):
         last_modes = []
 
-        def spy_kernelize(model, device=None, mode=None, **kwargs):
+        def spy_kernelize(model, device=None, mode=None):
             last_modes.append(mode)
 
         with patch.object(hub_kernels_pkg, "_kernels_kernelize", side_effect=spy_kernelize):

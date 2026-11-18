@@ -18,6 +18,7 @@
 # limitations under the License.
 
 
+import torch
 from huggingface_hub.dataclasses import strict
 from torch import nn
 
@@ -82,7 +83,6 @@ class YoutuConfig(DeepseekV3Config):
     # remove unused attribute
     n_shared_experts = AttributeError()
     n_routed_experts = AttributeError()
-    output_router_logits = AttributeError()
     routed_scaling_factor = AttributeError()
     n_group = AttributeError()
     topk_group = AttributeError()
@@ -92,7 +92,6 @@ class YoutuConfig(DeepseekV3Config):
     pretraining_tp = AttributeError()
     moe_intermediate_size = AttributeError()
     num_mtp_layers = AttributeError()
-    base_model_ep_plan = AttributeError()
 
     def __post_init__(self, **kwargs):
         if self.initializer_range is None:
@@ -126,6 +125,7 @@ class YoutuDecoderLayer(LlamaDecoderLayer):
 
 
 class YoutuPreTrainedModel(LlamaPreTrainedModel, PreTrainedModel):
+    @torch.no_grad()
     def _init_weights(self, module):
         PreTrainedModel._init_weights(self, module)
         std = getattr(self.config, "initializer_range", 0.02)

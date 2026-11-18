@@ -39,6 +39,7 @@ from ...utils import (
     is_scipy_available,
     requires_backends,
 )
+from ...utils.import_utils import requires
 from ..owlvit.image_processing_owlvit import OwlViTImageProcessor
 from ..owlvit.image_processing_pil_owlvit import OwlViTImageProcessorPil
 
@@ -311,6 +312,7 @@ class Owlv2ImageProcessor(OwlViTImageProcessor):
 
 
 @auto_docstring
+@requires(backends=("torch",))
 class Owlv2ImageProcessorPil(OwlViTImageProcessorPil):
     resample = PILImageResampling.BILINEAR
     image_mean = OPENAI_CLIP_MEAN

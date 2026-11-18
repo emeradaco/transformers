@@ -15,7 +15,6 @@
 
 from ...processing_utils import ProcessingKwargs, ProcessorMixin
 from ...utils import auto_docstring, is_torch_available, logging
-from ...utils.deprecation import deprecate_attr
 from ...utils.import_utils import requires
 
 
@@ -26,9 +25,15 @@ if is_torch_available():
 logger = logging.get_logger(__name__)
 
 
+class InklingProcessorKwargs(ProcessingKwargs, total=False):
+    _defaults = {}
+
+
 @auto_docstring
 @requires(backends=("torch",))
 class InklingProcessor(ProcessorMixin):
+    valid_processor_kwargs = InklingProcessorKwargs
+
     def __init__(
         self,
         feature_extractor=None,
@@ -122,7 +127,5 @@ class InklingProcessor(ProcessorMixin):
         ]
         return [name for name in dict.fromkeys(names) if name not in self.unused_input_names]
 
-
-__getattr__ = deprecate_attr(__name__, rename={"InklingProcessorKwargs": (ProcessingKwargs, "5.29.0")})
 
 __all__ = ["InklingProcessor"]

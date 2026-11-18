@@ -7,15 +7,12 @@ on:
 env:
   SLACK_CHANNEL_ID: '#transformers-gh-ci-central'
 
-
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   get-python-versions:
-    permissions:
-      contents: read
     name: Get supported Python versions
-    if: github.repository == 'huggingface/transformers'
     runs-on: ubuntu-latest
     outputs:
       versions: ${{ steps.extract-versions.outputs.versions }}
@@ -38,8 +35,6 @@ jobs:
           echo "versions=$VERSIONS" >> $GITHUB_OUTPUT
 
   test-extras:
-    permissions:
-      contents: read
     name: Test extras on Python ${{ matrix.python-version }}
     needs: get-python-versions
     runs-on: ubuntu-latest
@@ -124,9 +119,7 @@ jobs:
           if-no-files-found: ignore
 
   precheck-slack:
-    permissions: {}
     name: Check Slack token availability
-    if: github.repository == 'huggingface/transformers'
     runs-on: ubuntu-latest
     outputs:
       has_slack_token: ${{ steps.chk.outputs.has_token }}
@@ -142,8 +135,6 @@ jobs:
           fi
 
   notify-failures:
-    permissions:
-      contents: read
     name: Notify failures to Slack
     needs: [test-extras, precheck-slack]
     runs-on: ubuntu-latest
@@ -157,7 +148,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
-          python-version-file: .python-version
+          python-version: '3.11'
 
       - name: Download all failure reports
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
@@ -184,26 +175,24 @@ jobs:
 
       - name: Send Slack notification
         if: env.SLACK_MESSAGE != ''
-        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c # v3.0.3
+        uses: slackapi/slack-github-action@45a88b9581bfab2566dc881e2cd66d334e621e2c
         with:
-          method: chat.postMessage
-          token: ${{ secrets.SLACK_CIFEEDBACK_BOT_TOKEN }}
+          channel-id: ${{ env.SLACK_CHANNEL_ID }}
           payload: |
             {
-              "channel": ${{ toJSON(env.SLACK_CHANNEL_ID) }},
               "blocks": [
                 {
                   "type": "header",
                   "text": {
                     "type": "plain_text",
-                    "text": ${{ toJSON(env.SLACK_TITLE) }}
+                    "text": "${{ env.SLACK_TITLE }}"
                   }
                 },
                 {
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": ${{ toJSON(env.SLACK_MESSAGE) }}
+                    "text": "${{ env.SLACK_MESSAGE }}"
                   }
                 },
                 {
@@ -218,3 +207,5 @@ jobs:
                 }
               ]
             }
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_CIFEEDBACK_BOT_TOKEN }}

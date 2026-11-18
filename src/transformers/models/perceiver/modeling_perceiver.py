@@ -52,15 +52,15 @@ logger = logging.get_logger(__name__)
 @dataclass
 class PerceiverModelOutput(ModelOutput):
     r"""
-    logits (`torch.Tensor` of shape `(batch_size, num_labels)`):
+    logits (`torch.FloatTensor` of shape `(batch_size, num_labels)`):
         Classification (or regression if config.num_labels==1) scores (before SoftMax).
     """
 
-    logits: torch.Tensor | None = None
-    last_hidden_state: torch.Tensor | None = None
-    hidden_states: tuple[torch.Tensor] | None = None
-    attentions: tuple[torch.Tensor] | None = None
-    cross_attentions: tuple[torch.Tensor] | None = None
+    logits: torch.FloatTensor | None = None
+    last_hidden_state: torch.FloatTensor | None = None
+    hidden_states: tuple[torch.FloatTensor] | None = None
+    attentions: tuple[torch.FloatTensor] | None = None
+    cross_attentions: tuple[torch.FloatTensor] | None = None
 
 
 @auto_docstring(
@@ -71,12 +71,12 @@ class PerceiverModelOutput(ModelOutput):
 @dataclass
 class PerceiverDecoderOutput(ModelOutput):
     r"""
-    logits (`torch.Tensor` of shape `(batch_size, num_labels)`):
+    logits (`torch.FloatTensor` of shape `(batch_size, num_labels)`):
         Output of the basic decoder.
     """
 
-    logits: torch.Tensor | None = None
-    cross_attentions: tuple[torch.Tensor] | None = None
+    logits: torch.FloatTensor | None = None
+    cross_attentions: tuple[torch.FloatTensor] | None = None
 
 
 @auto_docstring(
@@ -87,17 +87,17 @@ class PerceiverDecoderOutput(ModelOutput):
 @dataclass
 class PerceiverMaskedLMOutput(ModelOutput):
     r"""
-    loss (`torch.Tensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
+    loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
         Masked language modeling (MLM) loss.
-    logits (`torch.Tensor` of shape `(batch_size, sequence_length, config.vocab_size)`):
+    logits (`torch.FloatTensor` of shape `(batch_size, sequence_length, config.vocab_size)`):
         Prediction scores of the language modeling head (scores for each vocabulary token before SoftMax).
     """
 
-    loss: torch.Tensor | None = None
-    logits: torch.Tensor | None = None
-    hidden_states: tuple[torch.Tensor] | None = None
-    attentions: tuple[torch.Tensor] | None = None
-    cross_attentions: tuple[torch.Tensor] | None = None
+    loss: torch.FloatTensor | None = None
+    logits: torch.FloatTensor | None = None
+    hidden_states: tuple[torch.FloatTensor] | None = None
+    attentions: tuple[torch.FloatTensor] | None = None
+    cross_attentions: tuple[torch.FloatTensor] | None = None
 
 
 @auto_docstring(
@@ -109,17 +109,17 @@ class PerceiverMaskedLMOutput(ModelOutput):
 @dataclass
 class PerceiverClassifierOutput(ModelOutput):
     r"""
-    loss (`torch.Tensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
+    loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
         Classification (or regression if config.num_labels==1) loss.
-    logits (`torch.Tensor` of shape `(batch_size, config.num_labels)`):
+    logits (`torch.FloatTensor` of shape `(batch_size, config.num_labels)`):
         Classification (or regression if config.num_labels==1) scores (before SoftMax).
     """
 
-    loss: torch.Tensor | None = None
-    logits: torch.Tensor | None = None
-    hidden_states: tuple[torch.Tensor] | None = None
-    attentions: tuple[torch.Tensor] | None = None
-    cross_attentions: tuple[torch.Tensor] | None = None
+    loss: torch.FloatTensor | None = None
+    logits: torch.FloatTensor | None = None
+    hidden_states: tuple[torch.FloatTensor] | None = None
+    attentions: tuple[torch.FloatTensor] | None = None
+    cross_attentions: tuple[torch.FloatTensor] | None = None
 
 
 class PerceiverEmbeddings(nn.Module):
@@ -185,9 +185,9 @@ class PerceiverSelfAttention(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor | None = None,
-        inputs: torch.Tensor | None = None,
-        inputs_mask: torch.Tensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
+        inputs: torch.FloatTensor | None = None,
+        inputs_mask: torch.FloatTensor | None = None,
         output_attentions: bool | None = False,
     ) -> tuple[torch.Tensor]:
         hidden_states = self.layernorm1(hidden_states)
@@ -306,9 +306,9 @@ class PerceiverAttention(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor | None = None,
-        inputs: torch.Tensor | None = None,
-        inputs_mask: torch.Tensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
+        inputs: torch.FloatTensor | None = None,
+        inputs_mask: torch.FloatTensor | None = None,
         output_attentions: bool | None = False,
     ) -> tuple[torch.Tensor]:
         self_outputs = self.self(
@@ -383,9 +383,9 @@ class PerceiverLayer(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor | None = None,
-        inputs: torch.Tensor | None = None,
-        inputs_mask: torch.Tensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
+        inputs: torch.FloatTensor | None = None,
+        inputs_mask: torch.FloatTensor | None = None,
         output_attentions: bool | None = False,
     ) -> tuple[torch.Tensor]:
         attention_outputs = self.attention(
@@ -468,9 +468,9 @@ class PerceiverEncoder(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor | None = None,
-        inputs: torch.Tensor | None = None,
-        inputs_mask: torch.Tensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
+        inputs: torch.FloatTensor | None = None,
+        inputs_mask: torch.FloatTensor | None = None,
         output_attentions: bool | None = False,
         output_hidden_states: bool | None = False,
         return_dict: bool | None = True,
@@ -532,6 +532,7 @@ class PerceiverPreTrainedModel(PreTrainedModel):
     main_input_name = "inputs"
     input_modalities = ("image",)  # technically can be anything but HF impl has only image processor
 
+    @torch.no_grad()
     def _init_weights(self, module):
         """Initialize the weights"""
         super()._init_weights(module)
@@ -560,7 +561,7 @@ class PerceiverPreTrainedModel(PreTrainedModel):
 class PerceiverModel(PerceiverPreTrainedModel):
     def __init__(
         self,
-        config: PerceiverConfig,
+        config,
         decoder: Optional["PerceiverAbstractDecoder"] = None,
         input_preprocessor: PreprocessorType = None,
         output_postprocessor: PostprocessorType = None,
@@ -596,8 +597,8 @@ class PerceiverModel(PerceiverPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        inputs: torch.Tensor,
-        attention_mask: torch.Tensor | None = None,
+        inputs: torch.FloatTensor,
+        attention_mask: torch.FloatTensor | None = None,
         subsampled_output_points: dict[str, torch.Tensor] | None = None,
         output_attentions: bool | None = None,
         output_hidden_states: bool | None = None,
@@ -606,7 +607,7 @@ class PerceiverModel(PerceiverPreTrainedModel):
         **kwargs,
     ) -> tuple | PerceiverModelOutput:
         r"""
-        inputs (`torch.Tensor`):
+        inputs (`torch.FloatTensor`):
             Inputs to the perceiver. Can be anything: images, text, audio, video, etc.
         subsampled_output_points (`dict[str, torch.Tensor]`, *optional*):
             Dictionary of tensors used as queries for the decoder. The decoder maps these queries to the latent
@@ -622,7 +623,7 @@ class PerceiverModel(PerceiverPreTrainedModel):
         ...     PerceiverClassificationDecoder,
         ... )
         >>> import torch
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
         >>> from PIL import Image
 
@@ -848,8 +849,12 @@ class PerceiverForMaskedLM(PerceiverPreTrainedModel):
         **kwargs,
     ) -> tuple | PerceiverMaskedLMOutput:
         r"""
-        inputs (`torch.Tensor`):
+        inputs (`torch.FloatTensor`):
             Inputs to the perceiver. Can be anything: images, text, audio, video, etc.
+        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Labels for computing the masked language modeling loss. Indices should be in `[-100, 0, ...,
+            config.vocab_size]` (see `input_ids` docstring) Tokens with indices set to `-100` are ignored (masked), the
+            loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`
 
         Examples:
 
@@ -937,7 +942,7 @@ class PerceiverForMaskedLM(PerceiverPreTrainedModel):
     """
 )
 class PerceiverForSequenceClassification(PerceiverPreTrainedModel):
-    def __init__(self, config: PerceiverConfig):
+    def __init__(self, config):
         super().__init__(config)
 
         trainable_position_encoding_kwargs_decoder = {"num_channels": config.d_latents, "index_dims": 1}
@@ -970,7 +975,7 @@ class PerceiverForSequenceClassification(PerceiverPreTrainedModel):
         **kwargs,
     ) -> tuple | PerceiverClassifierOutput:
         r"""
-        inputs (`torch.Tensor`):
+        inputs (`torch.FloatTensor`):
             Inputs to the perceiver. Can be anything: images, text, audio, video, etc.
         labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
             Labels for computing the classification/regression loss. Indices should be in `[0, ..., config.num_labels -
@@ -1059,7 +1064,7 @@ class PerceiverForSequenceClassification(PerceiverPreTrainedModel):
     """
 )
 class PerceiverForImageClassificationLearned(PerceiverPreTrainedModel):
-    def __init__(self, config: PerceiverConfig):
+    def __init__(self, config):
         super().__init__(config)
 
         trainable_position_encoding_kwargs_preprocessor = {"num_channels": 256, "index_dims": config.image_size**2}
@@ -1103,7 +1108,7 @@ class PerceiverForImageClassificationLearned(PerceiverPreTrainedModel):
         **kwargs,
     ) -> tuple | PerceiverClassifierOutput:
         r"""
-        inputs (`torch.Tensor`):
+        inputs (`torch.FloatTensor`):
             Inputs to the perceiver. Can be anything: images, text, audio, video, etc.
         labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
             Labels for computing the image classification/regression loss. Indices should be in `[0, ...,
@@ -1115,7 +1120,7 @@ class PerceiverForImageClassificationLearned(PerceiverPreTrainedModel):
         ```python
         >>> from transformers import AutoImageProcessor, PerceiverForImageClassificationLearned
         >>> from PIL import Image
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
 
         >>> url = "http://images.cocodataset.org/val2017/000000039769.jpg"
@@ -1184,7 +1189,7 @@ class PerceiverForImageClassificationLearned(PerceiverPreTrainedModel):
     """
 )
 class PerceiverForImageClassificationFourier(PerceiverPreTrainedModel):
-    def __init__(self, config: PerceiverConfig):
+    def __init__(self, config):
         super().__init__(config)
 
         fourier_position_encoding_kwargs_preprocessor = {
@@ -1228,7 +1233,7 @@ class PerceiverForImageClassificationFourier(PerceiverPreTrainedModel):
         **kwargs,
     ) -> tuple | PerceiverClassifierOutput:
         r"""
-        inputs (`torch.Tensor`):
+        inputs (`torch.FloatTensor`):
             Inputs to the perceiver. Can be anything: images, text, audio, video, etc.
         labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
             Labels for computing the image classification/regression loss. Indices should be in `[0, ...,
@@ -1240,7 +1245,7 @@ class PerceiverForImageClassificationFourier(PerceiverPreTrainedModel):
         ```python
         >>> from transformers import AutoImageProcessor, PerceiverForImageClassificationFourier
         >>> from PIL import Image
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
 
         >>> url = "http://images.cocodataset.org/val2017/000000039769.jpg"
@@ -1307,7 +1312,7 @@ class PerceiverForImageClassificationFourier(PerceiverPreTrainedModel):
     """
 )
 class PerceiverForImageClassificationConvProcessing(PerceiverPreTrainedModel):
-    def __init__(self, config: PerceiverConfig):
+    def __init__(self, config):
         super().__init__(config)
 
         fourier_position_encoding_kwargs_preprocessor = {
@@ -1352,7 +1357,7 @@ class PerceiverForImageClassificationConvProcessing(PerceiverPreTrainedModel):
         **kwargs,
     ) -> tuple | PerceiverClassifierOutput:
         r"""
-        inputs (`torch.Tensor`):
+        inputs (`torch.FloatTensor`):
             Inputs to the perceiver. Can be anything: images, text, audio, video, etc.
         labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
             Labels for computing the image classification/regression loss. Indices should be in `[0, ...,
@@ -1364,7 +1369,7 @@ class PerceiverForImageClassificationConvProcessing(PerceiverPreTrainedModel):
         ```python
         >>> from transformers import AutoImageProcessor, PerceiverForImageClassificationConvProcessing
         >>> from PIL import Image
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
 
         >>> url = "http://images.cocodataset.org/val2017/000000039769.jpg"
@@ -1431,7 +1436,7 @@ class PerceiverForImageClassificationConvProcessing(PerceiverPreTrainedModel):
     """
 )
 class PerceiverForOpticalFlow(PerceiverPreTrainedModel):
-    def __init__(self, config: PerceiverConfig):
+    def __init__(self, config):
         super().__init__(config)
 
         fourier_position_encoding_kwargs_preprocessor = {
@@ -1492,7 +1497,7 @@ class PerceiverForOpticalFlow(PerceiverPreTrainedModel):
         **kwargs,
     ) -> tuple | PerceiverClassifierOutput:
         r"""
-        inputs (`torch.Tensor`):
+        inputs (`torch.FloatTensor`):
             Inputs to the perceiver. Can be anything: images, text, audio, video, etc.
         labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
             Labels for computing the optical flow loss. Indices should be in `[0, ..., config.num_labels - 1]`.
@@ -1701,7 +1706,7 @@ class PerceiverForMultimodalAutoencoding(PerceiverPreTrainedModel):
         **kwargs,
     ) -> tuple | PerceiverClassifierOutput:
         r"""
-        inputs (`torch.Tensor`):
+        inputs (`torch.FloatTensor`):
             Inputs to the perceiver. Can be anything: images, text, audio, video, etc.
         subsampled_output_points (`dict[str, torch.Tensor]`, *optional*):
             Dictionary of tensors used as queries for the decoder. The decoder maps these queries to the latent
@@ -1851,7 +1856,9 @@ class PerceiverProjectionDecoder(PerceiverAbstractDecoder):
     def decoder_query(self, inputs, modality_sizes=None, inputs_without_pos=None, subsampled_points=None):
         return None
 
-    def forward(self, query: torch.Tensor, z: torch.Tensor, query_mask: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self, query: torch.Tensor, z: torch.FloatTensor, query_mask: torch.FloatTensor | None = None
+    ) -> torch.FloatTensor:
         # (batch_size, num_latents, d_latents) -> (batch_size, d_latents)
         z = torch.mean(z, dim=1)
         # (batch_size, d_latents) -> (batch_size, config.num_labels)
@@ -1975,7 +1982,7 @@ class PerceiverBasicDecoder(PerceiverAbstractDecoder):
             # to get the indices for the unflattened array
             # unravel_index returns a tuple (x_idx, y_idx, ...)
             # stack to get the [n, d] tensor of coordinates
-            indices = torch.unravel_index(subsampled_points.to(inputs.device), self.output_index_dims)
+            indices = torch.unravel_index(subsampled_points, self.output_index_dims)
             pos = torch.stack(indices, dim=1)
             batch_size = inputs.shape[0]
             # Map these coordinates to [-1, 1]
@@ -2017,8 +2024,8 @@ class PerceiverBasicDecoder(PerceiverAbstractDecoder):
     def forward(
         self,
         query: torch.Tensor,
-        z: torch.Tensor,
-        query_mask: torch.Tensor | None = None,
+        z: torch.FloatTensor,
+        query_mask: torch.FloatTensor | None = None,
         output_attentions: bool | None = False,
     ) -> PerceiverDecoderOutput:
         # Cross-attention decoding.
@@ -2078,8 +2085,8 @@ class PerceiverClassificationDecoder(PerceiverAbstractDecoder):
     def forward(
         self,
         query: torch.Tensor,
-        z: torch.Tensor,
-        query_mask: torch.Tensor | None = None,
+        z: torch.FloatTensor,
+        query_mask: torch.FloatTensor | None = None,
         output_attentions: bool | None = False,
     ) -> PerceiverDecoderOutput:
         decoder_outputs = self.decoder(query, z, output_attentions=output_attentions)
@@ -2113,8 +2120,8 @@ class PerceiverOpticalFlowDecoder(PerceiverAbstractDecoder):
     def forward(
         self,
         query: torch.Tensor,
-        z: torch.Tensor,
-        query_mask: torch.Tensor | None = None,
+        z: torch.FloatTensor,
+        query_mask: torch.FloatTensor | None = None,
         output_attentions: bool | None = False,
     ) -> PerceiverDecoderOutput:
         decoder_outputs = self.decoder(query, z, output_attentions=output_attentions)
@@ -2169,7 +2176,7 @@ class PerceiverBasicVideoAutoencodingDecoder(PerceiverAbstractDecoder):
         )
 
     def forward(
-        self, query: torch.Tensor, z: torch.Tensor, query_mask: torch.Tensor | None = None
+        self, query: torch.Tensor, z: torch.FloatTensor, query_mask: torch.FloatTensor | None = None
     ) -> PerceiverDecoderOutput:
         decoder_outputs = self.decoder(query, z)
         logits = decoder_outputs.logits
@@ -2302,8 +2309,8 @@ class PerceiverMultimodalDecoder(PerceiverAbstractDecoder):
     def forward(
         self,
         query: torch.Tensor,
-        z: torch.Tensor,
-        query_mask: torch.Tensor | None = None,
+        z: torch.FloatTensor,
+        query_mask: torch.FloatTensor | None = None,
         output_attentions: bool | None = False,
     ) -> torch.Tensor:
         # B x 1 x num_classes -> B x num_classes
@@ -2442,7 +2449,7 @@ def generate_fourier_features(pos, num_bands, max_resolution=(224, 224), concat_
         Whether to use a single phase (sin) or two (sin/cos) for each frequency band.
 
     Returns:
-      `torch.Tensor` of shape `(batch_size, sequence_length, n_channels)`: The Fourier position embeddings. If
+      `torch.FloatTensor` of shape `(batch_size, sequence_length, n_channels)`: The Fourier position embeddings. If
       `concat_pos` is `True` and `sine_only` is `False`, output dimensions are ordered as: [dim_1, dim_2, ..., dim_d,
       sin(pi*f_1*dim_1), ..., sin(pi*f_K*dim_1), ..., sin(pi*f_1*dim_d), ..., sin(pi*f_K*dim_d), cos(pi*f_1*dim_1),
       ..., cos(pi*f_K*dim_1), ..., cos(pi*f_1*dim_d), ..., cos(pi*f_K*dim_d)], where dim_i is pos[:, i] and f_k is the
@@ -2477,7 +2484,7 @@ def generate_fourier_features(pos, num_bands, max_resolution=(224, 224), concat_
     return per_pos_features
 
 
-def build_linear_positions(index_dims, output_range=(-1.0, 1.0), device=None):
+def build_linear_positions(index_dims, output_range=(-1.0, 1.0)):
     """
     Generate an array of position indices for an N-D input array.
 
@@ -2486,17 +2493,13 @@ def build_linear_positions(index_dims, output_range=(-1.0, 1.0), device=None):
         The shape of the index dimensions of the input array.
       output_range (`tuple[float]`, *optional*, defaults to `(-1.0, 1.0)`):
         The min and max values taken by each input index dimension.
-      device (`torch.device`, *optional*):
-        Device on which to allocate the linspace/stack. Defaults to CPU (torch default).
 
     Returns:
-      `torch.Tensor` of shape `(index_dims[0], index_dims[1], .., index_dims[-1], N)`.
+      `torch.FloatTensor` of shape `(index_dims[0], index_dims[1], .., index_dims[-1], N)`.
     """
 
     def _linspace(n_xels_per_dim):
-        return torch.linspace(
-            start=output_range[0], end=output_range[1], steps=n_xels_per_dim, dtype=torch.float32, device=device
-        )
+        return torch.linspace(start=output_range[0], end=output_range[1], steps=n_xels_per_dim, dtype=torch.float32)
 
     dim_ranges = [_linspace(n_xels_per_dim) for n_xels_per_dim in index_dims]
     array_index_grid = torch.meshgrid(*dim_ranges, indexing="ij")
@@ -2575,25 +2578,23 @@ class PerceiverTrainablePositionEncoding(PerceiverAbstractPositionEncoding):
         return position_embeddings
 
 
-def _check_or_build_spatial_positions(pos, index_dims, batch_size, device=None):
+def _check_or_build_spatial_positions(pos, index_dims, batch_size):
     """
     Checks or builds spatial position features (x, y, ...).
 
     Args:
-      pos (`torch.Tensor`):
+      pos (`torch.FloatTensor`):
         None, or an array of position features. If None, position features are built. Otherwise, their size is checked.
       index_dims (`list[int]`):
         An iterable giving the spatial/index size of the data to be featurized.
       batch_size (`int`):
         The batch size of the data to be featurized.
-      device (`torch.device`, *optional*):
-        Device to build the spatial positions on when ``pos`` is ``None``.
 
     Returns:
-        `torch.Tensor` of shape `(batch_size, prod(index_dims))` an array of position features.
+        `torch.FloatTensor` of shape `(batch_size, prod(index_dims))` an array of position features.
     """
     if pos is None:
-        pos = build_linear_positions(index_dims, device=device)
+        pos = build_linear_positions(index_dims)
         # equivalent to `torch.broadcast_to(pos[None], (batch_size,) + pos.shape)`
         # but `torch.broadcast_to` cannot be converted to ONNX
         pos = pos[None].expand((batch_size,) + pos.shape)
@@ -2638,16 +2639,16 @@ class PerceiverFourierPositionEncoding(PerceiverAbstractPositionEncoding):
         batch_size: int,
         device: torch.device,
         dtype: torch.dtype,
-        pos: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        pos = _check_or_build_spatial_positions(pos, index_dims, batch_size, device=device)
+        pos: torch.FloatTensor | None = None,
+    ) -> torch.FloatTensor:
+        pos = _check_or_build_spatial_positions(pos, index_dims, batch_size)
         fourier_pos_enc = generate_fourier_features(
             pos,
             num_bands=self.num_bands,
             max_resolution=self.max_resolution,
             concat_pos=self.concat_pos,
             sine_only=self.sine_only,
-        ).to(dtype=dtype)
+        ).to(device=device, dtype=dtype)
         return fourier_pos_enc
 
 
@@ -3261,8 +3262,8 @@ class PerceiverMultimodalPreprocessor(AbstractPreprocessor):
             if modality in self.mask_probs:
                 mask_token = self.mask[modality].expand(batch_size, -1, -1)
                 mask_prob = self.mask_probs[modality]
-                mask = torch.bernoulli(torch.full([batch_size, num_samples], mask_prob, device=mask_token.device))
-                mask = torch.unsqueeze(mask, dim=2)
+                mask = torch.bernoulli(torch.full([batch_size, num_samples], mask_prob))
+                mask = torch.unsqueeze(mask, dim=2).to(mask_token.device)
                 output_padded = (1 - mask) * output_padded + mask * mask_token
 
             padded[modality] = output_padded

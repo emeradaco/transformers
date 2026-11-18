@@ -26,9 +26,10 @@ from ...generation import GenerationMixin
 from ...masking_utils import create_causal_mask
 from ...modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from ...modeling_rope_utils import ROPE_INIT_FUNCTIONS, dynamic_rope_update
-from ...modeling_utils import PreTrainedModel, slice_logits_to_keep
+from ...modeling_utils import PreTrainedModel
 from ...utils import auto_docstring, logging
 from ...utils.deprecation import deprecate_kwarg
+from ...utils.generic import maybe_autocast
 from .configuration_gpt_neox_japanese import GPTNeoXJapaneseConfig
 
 
@@ -40,9 +41,10 @@ class GPTNeoXJapanesePreTrainedModel(PreTrainedModel):
     config: GPTNeoXJapaneseConfig
     base_model_prefix = "gpt_neox_japanese"
     _no_split_modules = ["GPTNeoXJapaneseLayer"]
-    _skip_keys_device_placement = ["cache"]
+    _skip_keys_device_placement = ["past_key_values"]
     _can_compile_fullgraph = True
 
+    @torch.no_grad()
     def _init_weights(self, module):
         """Initialize the weights"""
         super()._init_weights(module)
@@ -51,8 +53,10 @@ class GPTNeoXJapanesePreTrainedModel(PreTrainedModel):
                 init.zeros_(module.dense_bias)
 
 
+# Copied from transformers.models.llama.modeling_llama.LlamaRotaryEmbedding with Llama->GPTNeoXJapanese
 class GPTNeoXJapaneseRotaryEmbedding(nn.Module):
-    def __init__(self, config: GPTNeoXJapaneseConfig):
+    @deprecate_kwarg("device", version="5.18")
+    def __init__(self, config: GPTNeoXJapaneseConfig, device=None):
         super().__init__()
         self.max_seq_len_cached = config.max_position_embeddings
         self.original_max_seq_len = config.max_position_embeddings
@@ -63,13 +67,16 @@ class GPTNeoXJapaneseRotaryEmbedding(nn.Module):
         rope_init_fn: Callable = self.compute_default_rope_parameters
         if self.rope_type != "default":
             rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
-        inv_freq, self.attention_scaling = rope_init_fn(self.config)
+        inv_freq, self.attention_scaling = rope_init_fn(self.config, device)
 
         self.inv_freq = nn.Buffer(inv_freq, persistent=False)
         self.original_inv_freq = nn.Buffer(inv_freq.clone(), persistent=False)
 
     @staticmethod
-    def compute_default_rope_parameters(config: GPTNeoXJapaneseConfig, **kwargs) -> tuple[torch.Tensor, float]:
+    @deprecate_kwarg("device", version="5.18")
+    def compute_default_rope_parameters(
+        config: GPTNeoXJapaneseConfig, device=None, **kwargs
+    ) -> tuple[torch.Tensor, float]:
         """
         Computes the inverse frequencies according to the original RoPE implementation
         Args:
@@ -80,21 +87,28 @@ class GPTNeoXJapaneseRotaryEmbedding(nn.Module):
             post-processing scaling factor applied to the computed cos/sin (unused in this type of RoPE).
         """
         base = config.rope_parameters["rope_theta"]
-        partial_rotary_factor = config.rope_parameters.get("partial_rotary_factor", 1.0)
-        head_dim = getattr(config, "head_dim", None) or config.hidden_size // config.num_attention_heads
-        dim = int(head_dim * partial_rotary_factor)
+        dim = getattr(config, "head_dim", None) or config.hidden_size // config.num_attention_heads
 
         attention_factor = 1.0  # Unused in this type of RoPE
         # Compute the inverse frequencies
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float) / dim))
-        return inv_freq, attention_factor
+        return inv_freq.to(device), attention_factor
 
+    @torch.no_grad()
     @dynamic_rope_update  # power user: used with advanced RoPE types (e.g. dynamic rope)
     def forward(self, x, position_ids):
-        freqs = position_ids[..., None].float() * self.inv_freq.to(device=x.device, dtype=torch.float)
-        emb = torch.cat((freqs, freqs), dim=-1)
-        cos = emb.cos() * self.attention_scaling
-        sin = emb.sin() * self.attention_scaling
+        inv_freq_expanded = (
+            self.inv_freq[None, :, None].expand(position_ids.shape[0], -1, 1).to(dtype=torch.float, device=x.device)
+        )
+        position_ids_expanded = position_ids[:, None, :].float()
+
+        device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
+        # Disable any outside autocast context if any, to really force fp32
+        with maybe_autocast(device_type=device_type, enabled=False):
+            freqs = (inv_freq_expanded @ position_ids_expanded).transpose(1, 2)
+            emb = torch.cat((freqs, freqs), dim=-1)
+            cos = emb.cos() * self.attention_scaling
+            sin = emb.sin() * self.attention_scaling
 
         return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
 
@@ -159,8 +173,8 @@ class GPTNeoXJapaneseAttention(nn.Module):
 
     def forward(
         self,
-        hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor,
+        hidden_states: torch.FloatTensor,
+        attention_mask: torch.FloatTensor,
         position_ids: torch.LongTensor,
         layer_past: Cache | None = None,
         use_cache: bool | None = False,
@@ -321,8 +335,8 @@ class GPTNeoXJapaneseLayer(nn.Module):
 
     def forward(
         self,
-        hidden_states: torch.Tensor | None,
-        attention_mask: torch.Tensor | None = None,
+        hidden_states: torch.FloatTensor | None,
+        attention_mask: torch.FloatTensor | None = None,
         position_ids: torch.LongTensor | None = None,
         use_cache: bool | None = False,
         layer_past: Cache | None = None,
@@ -362,7 +376,7 @@ class GPTNeoXJapaneseLayer(nn.Module):
 
 @auto_docstring
 class GPTNeoXJapaneseModel(GPTNeoXJapanesePreTrainedModel):
-    def __init__(self, config: GPTNeoXJapaneseConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.config = config
 
@@ -383,14 +397,13 @@ class GPTNeoXJapaneseModel(GPTNeoXJapanesePreTrainedModel):
         self.embed_in = value
 
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        attention_mask: torch.Tensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
-        cache: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        past_key_values: Cache | None = None,
         use_cache: bool | None = None,
         output_attentions: bool | None = None,
         output_hidden_states: bool | None = None,
@@ -426,11 +439,11 @@ class GPTNeoXJapaneseModel(GPTNeoXJapanesePreTrainedModel):
         if inputs_embeds is None:
             inputs_embeds = self.embed_in(input_ids)
 
-        if use_cache and cache is None:
-            cache = DynamicCache(config=self.config)
+        if use_cache and past_key_values is None:
+            past_key_values = DynamicCache(config=self.config)
 
         if position_ids is None:
-            past_seen_tokens = cache.get_seq_length() if cache is not None else 0
+            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             position_ids = torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device) + past_seen_tokens
             position_ids = position_ids.unsqueeze(0)
 
@@ -438,7 +451,7 @@ class GPTNeoXJapaneseModel(GPTNeoXJapanesePreTrainedModel):
             config=self.config,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
-            cache=cache,
+            past_key_values=past_key_values,
             position_ids=position_ids,
         )
 
@@ -455,7 +468,7 @@ class GPTNeoXJapaneseModel(GPTNeoXJapanesePreTrainedModel):
                 hidden_states,
                 attention_mask=causal_mask,
                 position_ids=position_ids,
-                layer_past=cache,
+                layer_past=past_key_values,
                 use_cache=use_cache,
                 output_attentions=output_attentions,
                 position_embeddings=position_embeddings,
@@ -470,11 +483,13 @@ class GPTNeoXJapaneseModel(GPTNeoXJapanesePreTrainedModel):
             all_hidden_states = all_hidden_states + (hidden_states,)
 
         if not return_dict:
-            return tuple(v for v in [hidden_states, cache, all_hidden_states, all_attentions] if v is not None)
+            return tuple(
+                v for v in [hidden_states, past_key_values, all_hidden_states, all_attentions] if v is not None
+            )
 
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
-            cache=cache,
+            past_key_values=past_key_values,
             hidden_states=all_hidden_states,
             attentions=all_attentions,
         )
@@ -488,7 +503,7 @@ class GPTNeoXJapaneseModel(GPTNeoXJapanesePreTrainedModel):
 class GPTNeoXJapaneseForCausalLM(GPTNeoXJapanesePreTrainedModel, GenerationMixin):
     _tied_weights_keys = {"embed_out.weight": "gpt_neox_japanese.embed_in.weight"}
 
-    def __init__(self, config: GPTNeoXJapaneseConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.config = config
 
@@ -505,14 +520,13 @@ class GPTNeoXJapaneseForCausalLM(GPTNeoXJapanesePreTrainedModel, GenerationMixin
         self.embed_out = new_embeddings
 
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        attention_mask: torch.Tensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
-        cache: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        past_key_values: Cache | None = None,
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
         output_attentions: bool | None = None,
@@ -551,7 +565,7 @@ class GPTNeoXJapaneseForCausalLM(GPTNeoXJapanesePreTrainedModel, GenerationMixin
             attention_mask=attention_mask,
             position_ids=position_ids,
             inputs_embeds=inputs_embeds,
-            cache=cache,
+            past_key_values=past_key_values,
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
@@ -559,8 +573,9 @@ class GPTNeoXJapaneseForCausalLM(GPTNeoXJapanesePreTrainedModel, GenerationMixin
         )
 
         hidden_states = outputs[0]
-        hidden_states = slice_logits_to_keep(hidden_states, logits_to_keep)
-        logits = self.embed_out(hidden_states)
+        # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
+        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+        logits = self.embed_out(hidden_states[:, slice_indices, :])
 
         loss = None
         if labels is not None:
@@ -573,7 +588,7 @@ class GPTNeoXJapaneseForCausalLM(GPTNeoXJapanesePreTrainedModel, GenerationMixin
         return CausalLMOutputWithPast(
             loss=loss,
             logits=logits,
-            cache=outputs.cache,
+            past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )

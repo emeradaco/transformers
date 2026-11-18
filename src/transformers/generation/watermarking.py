@@ -157,13 +157,10 @@ class WatermarkDetector:
         num_tokens_scored_batch = np.zeros(batch_size)
         green_token_count_batch = np.zeros(batch_size)
         for batch_idx in range(ngram_tensors.shape[0]):
-            # Tensor keys are hashed by identity, so equal token windows need integer tuple keys.
-            # Scoring still needs tensors with the input dtype and device.
-            frequencies_table = collections.Counter(tuple(ngram) for ngram in ngram_tensors[batch_idx].tolist())
+            frequencies_table = collections.Counter(ngram_tensors[batch_idx])
             ngram_to_watermark_lookup = {}
             for ngram_example in frequencies_table:
-                ngram_tensor = input_ids.new_tensor(ngram_example)
-                prefix = ngram_tensor if selfhash else ngram_tensor[:-1]
+                prefix = ngram_example if selfhash else ngram_example[:-1]
                 target = ngram_example[-1]
                 ngram_to_watermark_lookup[ngram_example] = self._get_ngram_score_cached(prefix, target)
 
@@ -175,7 +172,8 @@ class WatermarkDetector:
             else:
                 num_tokens_scored_batch[batch_idx] = sum(frequencies_table.values())
                 green_token_count_batch[batch_idx] = sum(
-                    freq * ngram_to_watermark_lookup[ngram] for ngram, freq in frequencies_table.items()
+                    freq * outcome
+                    for freq, outcome in zip(frequencies_table.values(), ngram_to_watermark_lookup.values())
                 )
         return num_tokens_scored_batch, green_token_count_batch
 
@@ -188,7 +186,7 @@ class WatermarkDetector:
 
     def _compute_pval(self, x, loc=0, scale=1):
         z = (x - loc) / scale
-        return 0.5 * torch.special.erfc(torch.as_tensor(z / np.sqrt(2))).numpy()
+        return 1 - (0.5 * (1 + np.sign(z) * (1 - np.exp(-2 * z**2 / np.pi))))
 
     def __call__(
         self,
@@ -211,13 +209,6 @@ class WatermarkDetector:
                     if `return_dict=True` otherwise a `np.ndarray`.
 
         """
-        has_bos = input_ids[:, 0] == self.bos_token_id
-
-        if torch.any(has_bos) != torch.all(has_bos):
-            raise ValueError(
-                "Some batch contains inconsistent leading BOS token. Make sure "
-                "to prepare input with the same tokenization parameters."
-            )
 
         # Let's assume that if one batch start with `bos`, all batched also do
         if input_ids[0, 0] == self.bos_token_id:
@@ -284,14 +275,14 @@ class BayesianWatermarkDetectorModelOutput(ModelOutput):
     Base class for outputs of models predicting if the text is watermarked.
 
     Args:
-        loss (`torch.Tensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
+        loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
             Language modeling loss.
-        posterior_probabilities (`torch.Tensor` of shape `(1,)`):
+        posterior_probabilities (`torch.FloatTensor` of shape `(1,)`):
             Multiple choice classification loss.
     """
 
-    loss: torch.Tensor | None = None
-    posterior_probabilities: torch.Tensor | None = None
+    loss: torch.FloatTensor | None = None
+    posterior_probabilities: torch.FloatTensor | None = None
 
 
 class BayesianDetectorWatermarkedLikelihood(nn.Module):

@@ -18,7 +18,10 @@ Speech processor class for Wav2Vec2-BERT
 from ...processing_utils import ProcessingKwargs, ProcessorMixin, Unpack
 from ...tokenization_utils_base import AudioInput, PreTokenizedInput, TextInput
 from ...utils import auto_docstring
-from ...utils.deprecation import deprecate_attr
+
+
+class Wav2Vec2BertProcessorKwargs(ProcessingKwargs, total=False):
+    _defaults = {}
 
 
 @auto_docstring
@@ -31,7 +34,7 @@ class Wav2Vec2BertProcessor(ProcessorMixin):
         self,
         audio: AudioInput | None = None,
         text: str | list[str] | TextInput | PreTokenizedInput | None = None,
-        **kwargs: Unpack[ProcessingKwargs],
+        **kwargs: Unpack[Wav2Vec2BertProcessorKwargs],
     ):
         r"""
         Returns:
@@ -46,6 +49,7 @@ class Wav2Vec2BertProcessor(ProcessorMixin):
         if audio is None and text is None:
             raise ValueError("You need to specify either an `audio` or `text` input to process.")
         output_kwargs = self._merge_kwargs(
+            Wav2Vec2BertProcessorKwargs,
             tokenizer_init_kwargs=self.tokenizer.init_kwargs,
             **kwargs,
         )
@@ -91,7 +95,5 @@ class Wav2Vec2BertProcessor(ProcessorMixin):
         feature_extractor_input_names = self.feature_extractor.model_input_names
         return feature_extractor_input_names + ["labels"]
 
-
-__getattr__ = deprecate_attr(__name__, rename={"Wav2Vec2BertProcessorKwargs": (ProcessingKwargs, "5.29.0")})
 
 __all__ = ["Wav2Vec2BertProcessor"]

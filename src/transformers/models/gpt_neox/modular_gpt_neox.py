@@ -16,10 +16,9 @@ from ...modeling_outputs import (
     SequenceClassifierOutputWithPast,
     TokenClassifierOutput,
 )
-from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel, slice_logits_to_keep
+from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from ...processing_utils import Unpack
 from ...utils import TransformersKwargs, auto_docstring, can_return_tuple, logging
-from ...utils.deprecation import deprecate_kwarg
 from ...utils.generic import merge_with_config_defaults
 from ...utils.output_capturing import capture_outputs
 from ..llama.modeling_llama import LlamaModel, LlamaPreTrainedModel, LlamaRotaryEmbedding, rotate_half
@@ -144,8 +143,8 @@ class GPTNeoXAttention(nn.Module):
 
     def forward(
         self,
-        hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor,
+        hidden_states: torch.FloatTensor,
+        attention_mask: torch.FloatTensor,
         layer_past: Cache | None = None,
         position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
         **kwargs: Unpack[FlashAttentionKwargs],
@@ -199,8 +198,8 @@ class GPTNeoXLayer(GradientCheckpointingLayer):
 
     def forward(
         self,
-        hidden_states: torch.Tensor | None,
-        attention_mask: torch.Tensor | None = None,
+        hidden_states: torch.FloatTensor | None,
+        attention_mask: torch.FloatTensor | None = None,
         position_ids: torch.LongTensor | None = None,
         use_cache: bool | None = False,
         layer_past: Cache | None = None,
@@ -246,7 +245,7 @@ GPT_NEOX_INPUTS_DOCSTRING = None  # Will be picked up by modular
 
 
 class GPTNeoXModel(LlamaModel):
-    def __init__(self, config: GPTNeoXConfig):
+    def __init__(self, config):
         PreTrainedModel.__init__(self, config)
         self.config = config
 
@@ -269,14 +268,13 @@ class GPTNeoXModel(LlamaModel):
     @merge_with_config_defaults
     @capture_outputs
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        attention_mask: torch.Tensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
-        cache: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        past_key_values: Cache | None = None,
         use_cache: bool | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithPast:
@@ -286,11 +284,11 @@ class GPTNeoXModel(LlamaModel):
         if inputs_embeds is None:
             inputs_embeds = self.embed_in(input_ids)
 
-        if use_cache and cache is None:
-            cache = DynamicCache(config=self.config)
+        if use_cache and past_key_values is None:
+            past_key_values = DynamicCache(config=self.config)
 
         if position_ids is None:
-            past_seen_tokens = cache.get_seq_length() if cache is not None else 0
+            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             position_ids = torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device) + past_seen_tokens
             position_ids = position_ids.unsqueeze(0)
 
@@ -298,7 +296,7 @@ class GPTNeoXModel(LlamaModel):
             config=self.config,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
-            cache=cache,
+            past_key_values=past_key_values,
             position_ids=position_ids,
         )
 
@@ -309,7 +307,7 @@ class GPTNeoXModel(LlamaModel):
                 hidden_states,
                 attention_mask=causal_mask,
                 position_ids=position_ids,
-                layer_past=cache,
+                layer_past=past_key_values,
                 use_cache=use_cache,
                 position_embeddings=position_embeddings,
                 **kwargs,
@@ -319,7 +317,7 @@ class GPTNeoXModel(LlamaModel):
 
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
-            cache=cache,
+            past_key_values=past_key_values,
         )
 
 
@@ -333,7 +331,7 @@ class GPTNeoXForCausalLM(GPTNeoXPreTrainedModel, GenerationMixin):
     _tp_plan = {"lm_head": "colwise_gather_output"}
     _pp_plan = {"lm_head": (["hidden_states"], ["logits"])}
 
-    def __init__(self, config: GPTNeoXConfig):
+    def __init__(self, config):
         super().__init__(config)
 
         self.gpt_neox = GPTNeoXModel(config)
@@ -350,14 +348,13 @@ class GPTNeoXForCausalLM(GPTNeoXPreTrainedModel, GenerationMixin):
 
     @can_return_tuple
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        attention_mask: torch.Tensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
-        cache: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        past_key_values: Cache | None = None,
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
         logits_to_keep: int | torch.Tensor = 0,
@@ -391,14 +388,14 @@ class GPTNeoXForCausalLM(GPTNeoXPreTrainedModel, GenerationMixin):
             attention_mask=attention_mask,
             position_ids=position_ids,
             inputs_embeds=inputs_embeds,
-            cache=cache,
+            past_key_values=past_key_values,
             use_cache=use_cache,
             **kwargs,
         )
 
         hidden_states = outputs.last_hidden_state
-        hidden_states = slice_logits_to_keep(hidden_states, logits_to_keep)
-        logits = self.lm_head(hidden_states)
+        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+        logits = self.lm_head(hidden_states[:, slice_indices, :])
 
         loss = None
         if labels is not None:
@@ -407,7 +404,7 @@ class GPTNeoXForCausalLM(GPTNeoXPreTrainedModel, GenerationMixin):
         return CausalLMOutputWithPast(
             loss=loss,
             logits=logits,
-            cache=outputs.cache,
+            past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
@@ -428,7 +425,7 @@ class GPTNeoXForCausalLM(GPTNeoXPreTrainedModel, GenerationMixin):
     """
 )
 class GPTNeoXForSequenceClassification(GPTNeoXPreTrainedModel):
-    def __init__(self, config: GPTNeoXConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.gpt_neox = GPTNeoXModel(config)
@@ -439,24 +436,30 @@ class GPTNeoXForSequenceClassification(GPTNeoXPreTrainedModel):
 
     @can_return_tuple
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        attention_mask: torch.Tensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
-        cache: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
+        past_key_values: Cache | None = None,
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
         **kwargs,
     ) -> SequenceClassifierOutputWithPast:
+        r"""
+        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
+            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
+            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
+        """
+
         outputs: BaseModelOutputWithPast = self.gpt_neox(
             input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
             inputs_embeds=inputs_embeds,
-            cache=cache,
+            past_key_values=past_key_values,
             use_cache=use_cache,
             **kwargs,
         )
@@ -489,14 +492,14 @@ class GPTNeoXForSequenceClassification(GPTNeoXPreTrainedModel):
         return SequenceClassifierOutputWithPast(
             loss=loss,
             logits=pooled_logits,
-            cache=outputs.cache,
+            past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
 
 
 class GPTNeoXForTokenClassification(GPTNeoXPreTrainedModel):
-    def __init__(self, config: GPTNeoXConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
 
@@ -509,15 +512,14 @@ class GPTNeoXForTokenClassification(GPTNeoXPreTrainedModel):
 
     @can_return_tuple
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
-        attention_mask: torch.Tensor | None = None,
+        past_key_values: Cache | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         token_type_ids: torch.LongTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
         **kwargs,
@@ -531,7 +533,7 @@ class GPTNeoXForTokenClassification(GPTNeoXPreTrainedModel):
 
         outputs: BaseModelOutputWithPast = self.gpt_neox(
             input_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             attention_mask=attention_mask,
             position_ids=position_ids,
             inputs_embeds=inputs_embeds,
@@ -557,7 +559,7 @@ class GPTNeoXForTokenClassification(GPTNeoXPreTrainedModel):
 
 @auto_docstring
 class GPTNeoXForQuestionAnswering(GPTNeoXPreTrainedModel):
-    def __init__(self, config: GPTNeoXConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.gpt_neox = GPTNeoXModel(config)
@@ -571,10 +573,10 @@ class GPTNeoXForQuestionAnswering(GPTNeoXPreTrainedModel):
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        attention_mask: torch.Tensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         token_type_ids: torch.LongTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         start_positions: torch.LongTensor | None = None,
         end_positions: torch.LongTensor | None = None,
         **kwargs,

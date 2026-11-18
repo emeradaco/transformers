@@ -16,8 +16,6 @@ concurrency:
 
 permissions:
   contents: read
-  # Read job logs, to report OOM-killed test shards to the CI dashboards.
-  actions: read
 
 jobs:
   pr-ci:

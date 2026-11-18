@@ -11,17 +11,15 @@ from ...modeling_layers import GenericForSequenceClassification, GenericForToken
 from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from ...processing_utils import Unpack
 from ...utils import logging
-from ...utils.deprecation import deprecate_kwarg
-from ...utils.output_capturing import OutputRecorder
 from ..deepseek_v2.modeling_deepseek_v2 import (
     DeepseekV2Attention,
-    DeepseekV2ForCausalLM,
-    DeepseekV2Model,
     DeepseekV2Moe,
     DeepseekV2TopkRouter,
 )
 from ..llama.modeling_llama import (
     LlamaDecoderLayer,
+    LlamaForCausalLM,
+    LlamaModel,
     LlamaPreTrainedModel,
     LlamaRMSNorm,
     LlamaRotaryEmbedding,
@@ -135,15 +133,14 @@ class DeepseekV3MoE(DeepseekV2Moe):
 
 
 class DeepseekV3Attention(DeepseekV2Attention):
-    """Multi-headed Latent Attention (MLA) from Deepseek V2, with support for rope interleave."""
+    """Multi-headed Latent Attention (MLA) from Deepseek V2"""
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         hidden_states: torch.Tensor,
         position_embeddings: tuple[torch.Tensor, torch.Tensor],
         attention_mask: torch.Tensor | None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         **kwargs: Unpack[FlashAttentionKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor] | None]:
         batch_size, seq_length = hidden_states.shape[:-1]
@@ -170,8 +167,8 @@ class DeepseekV3Attention(DeepseekV2Attention):
             q_rot, k_rot = apply_rotary_pos_emb(q_rot, k_rot, cos, sin)
 
         # Cache read / write is performed while latent KV is still compressed
-        if cache is not None:
-            kv_nope, k_rot = cache.update(kv_nope, k_rot, self.layer_idx, kwargs=kwargs)
+        if past_key_values is not None:
+            kv_nope, k_rot = past_key_values.update(kv_nope, k_rot, self.layer_idx)
 
         query_states = torch.cat((q_pass, q_rot), dim=-1)
 
@@ -214,14 +211,10 @@ class DeepseekV3DecoderLayer(LlamaDecoderLayer):
 
 
 class DeepseekV3PreTrainedModel(LlamaPreTrainedModel):
-    _can_record_outputs = {
-        "hidden_states": DeepseekV3DecoderLayer,
-        "attentions": DeepseekV3Attention,
-        "router_logits": OutputRecorder(DeepseekV3TopkRouter, index=0),
-    }
     _keep_in_fp32_modules_strict = ["e_score_correction_bias"]
     _keys_to_ignore_on_load_unexpected = [r"model\.layers\.61.*"]
 
+    @torch.no_grad()
     def _init_weights(self, module):
         PreTrainedModel._init_weights(self, module)
         if isinstance(module, DeepseekV3TopkRouter):
@@ -232,11 +225,11 @@ class DeepseekV3PreTrainedModel(LlamaPreTrainedModel):
             init.normal_(module.down_proj, mean=0.0, std=self.config.initializer_range)
 
 
-class DeepseekV3Model(DeepseekV2Model):
+class DeepseekV3Model(LlamaModel):
     pass
 
 
-class DeepseekV3ForCausalLM(DeepseekV2ForCausalLM):
+class DeepseekV3ForCausalLM(LlamaForCausalLM):
     pass
 
 

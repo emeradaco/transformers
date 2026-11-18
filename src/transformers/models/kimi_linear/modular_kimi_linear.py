@@ -49,7 +49,6 @@ from ...models.qwen3_next.modeling_qwen3_next import (
 )
 from ...processing_utils import Unpack
 from ...utils import TransformersKwargs, auto_docstring
-from ...utils.deprecation import deprecate_kwarg
 from ...utils.output_capturing import OutputRecorder
 
 
@@ -164,12 +163,11 @@ class KimiLinearAttention(DeepseekV3Attention):
         super().__init__(config, layer_idx)
         self.scaling = self.qk_head_dim ** (-0.5)
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: torch.Tensor | None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         **kwargs: Unpack[FlashAttentionKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor] | None]:
         batch_size, seq_length = hidden_states.shape[:-1]
@@ -189,8 +187,8 @@ class KimiLinearAttention(DeepseekV3Attention):
         k_rot = k_rot.view(batch_size, 1, seq_length, self.qk_rope_head_dim)
 
         # Cache read / write is performed while latent KV is still compressed
-        if cache is not None:
-            kv_nope, k_rot = cache.update(kv_nope, k_rot, self.layer_idx, kwargs=kwargs)
+        if past_key_values is not None:
+            kv_nope, k_rot = past_key_values.update(kv_nope, k_rot, self.layer_idx)
 
         key_states, value_states = self.expand_kv(kv_nope, k_rot)
 
@@ -266,13 +264,12 @@ class KimiLinearDecoderLayer(DeepseekV32DecoderLayer):
             else KimiLinearDeltaAttention(config, layer_idx)
         )
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         use_cache: bool | None = False,
         **kwargs: Unpack[TransformersKwargs],
     ) -> torch.Tensor:
@@ -282,7 +279,7 @@ class KimiLinearDecoderLayer(DeepseekV32DecoderLayer):
         if self.block_type == "linear_attention":
             hidden_states = self.self_attn(
                 hidden_states=hidden_states,
-                cache=cache,
+                cache_params=past_key_values,
                 attention_mask=attention_mask,
                 **kwargs,
             )
@@ -291,7 +288,7 @@ class KimiLinearDecoderLayer(DeepseekV32DecoderLayer):
                 hidden_states=hidden_states,
                 attention_mask=attention_mask,
                 position_ids=position_ids,
-                cache=cache,
+                past_key_values=past_key_values,
                 use_cache=use_cache,
                 **kwargs,
             )
@@ -314,6 +311,7 @@ class KimiLinearPreTrainedModel(Qwen3NextPreTrainedModel):
     }
     _keys_to_ignore_on_load_unexpected = None
 
+    @torch.no_grad()
     def _init_weights(self, module):
         PreTrainedModel._init_weights(self, module)
         if isinstance(module, KimiLinearForgetGate):  # following FLA initialization
@@ -339,14 +337,13 @@ class KimiLinearModel(Qwen3NextModel):
         super().__init__(config)
         del self.rotary_emb
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         use_cache: bool | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> MoeModelOutputWithPast:
@@ -356,11 +353,11 @@ class KimiLinearModel(Qwen3NextModel):
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
 
-        if use_cache and cache is None:
-            cache = DynamicCache(config=self.config)
+        if use_cache and past_key_values is None:
+            past_key_values = DynamicCache(config=self.config)
 
         if position_ids is None:
-            past_seen_tokens = cache.get_seq_length() if cache is not None else 0
+            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             position_ids: torch.LongTensor = torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device)
             position_ids = (position_ids + past_seen_tokens).unsqueeze(0)
 
@@ -370,7 +367,7 @@ class KimiLinearModel(Qwen3NextModel):
                 "config": self.config,
                 "inputs_embeds": inputs_embeds,
                 "attention_mask": attention_mask,
-                "cache": cache,
+                "past_key_values": past_key_values,
                 "position_ids": position_ids,
             }
             # Create the masks
@@ -386,7 +383,7 @@ class KimiLinearModel(Qwen3NextModel):
                 hidden_states,
                 attention_mask=causal_mask_mapping[self.config.layer_types[i]],
                 position_ids=position_ids,
-                cache=cache,
+                past_key_values=past_key_values,
                 use_cache=use_cache,
                 **kwargs,
             )
@@ -395,7 +392,7 @@ class KimiLinearModel(Qwen3NextModel):
 
         return MoeModelOutputWithPast(
             last_hidden_state=hidden_states,
-            cache=cache,
+            past_key_values=past_key_values,
         )
 
 

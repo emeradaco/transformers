@@ -172,7 +172,7 @@ class VisionTextDualEncoderModel(PreTrainedModel):
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        pixel_values: torch.Tensor | None = None,
+        pixel_values: torch.FloatTensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         return_loss: bool | None = None,
@@ -190,7 +190,7 @@ class VisionTextDualEncoderModel(PreTrainedModel):
 
         ```python
         >>> from PIL import Image
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
         >>> from transformers import (
         ...     VisionTextDualEncoderModel,

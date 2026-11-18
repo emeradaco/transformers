@@ -25,7 +25,6 @@ from ...audio_utils import AudioInput, make_list_of_audio
 from ...processing_utils import ProcessingKwargs, ProcessorMixin, Unpack
 from ...tokenization_utils_base import PreTokenizedInput, TextInput
 from ...utils import auto_docstring, is_torch_available, logging
-from ...utils.deprecation import deprecate_attr
 from ...utils.import_utils import requires
 
 
@@ -34,6 +33,23 @@ if is_torch_available():
 
 
 logger = logging.get_logger(__name__)
+
+
+class Nemotron3_5AsrProcessorKwargs(ProcessingKwargs, total=False):
+    _defaults = {
+        "audio_kwargs": {
+            "sampling_rate": 16000,
+            "padding": "longest",
+            "return_attention_mask": True,
+            "subsampling_factor": 8,
+        },
+        "text_kwargs": {
+            "padding": True,
+            "padding_side": "right",
+            "add_special_tokens": False,
+        },
+        "common_kwargs": {"return_tensors": "pt"},
+    }
 
 
 # Default supported right attention contexts (lookaheads, in subsampled encoder frames) of the NeMo
@@ -169,20 +185,6 @@ DEFAULT_PROMPT_DICTIONARY = {
 @requires(backends=("torch",))
 @auto_docstring
 class Nemotron3_5AsrProcessor(ProcessorMixin):
-    text_kwargs = {
-        "padding": True,
-        "padding_side": "right",
-        "add_special_tokens": False,
-        "return_tensors": "pt",
-    }
-    audio_kwargs = {
-        "sampling_rate": 16000,
-        "padding": "longest",
-        "return_attention_mask": True,
-        "subsampling_factor": 8,
-        "return_tensors": "pt",
-    }
-
     def __init__(
         self,
         feature_extractor,
@@ -239,7 +241,7 @@ class Nemotron3_5AsrProcessor(ProcessorMixin):
         is_streaming: bool = False,
         is_first_audio_chunk: bool | None = True,
         language: str | list[str] = "auto",
-        **kwargs: Unpack[ProcessingKwargs],
+        **kwargs: Unpack[Nemotron3_5AsrProcessorKwargs],
     ):
         r"""
         sampling_rate (`int`, *optional*):
@@ -271,6 +273,7 @@ class Nemotron3_5AsrProcessor(ProcessorMixin):
         audio = make_list_of_audio(audio)
 
         output_kwargs = self._merge_kwargs(
+            Nemotron3_5AsrProcessorKwargs,
             tokenizer_init_kwargs=self.tokenizer.init_kwargs,
             **kwargs,
         )
@@ -334,6 +337,7 @@ class Nemotron3_5AsrProcessor(ProcessorMixin):
             timestamps = durations.cumsum(dim=-1) - durations
 
             output_kwargs = self._merge_kwargs(
+                Nemotron3_5AsrProcessorKwargs,
                 tokenizer_init_kwargs=self.tokenizer.init_kwargs,
             )
             frame_rate = (
@@ -398,7 +402,9 @@ class Nemotron3_5AsrProcessor(ProcessorMixin):
 
     @property
     def _subsampling_factor(self) -> int:
-        output_kwargs = self._merge_kwargs(tokenizer_init_kwargs=self.tokenizer.init_kwargs)
+        output_kwargs = self._merge_kwargs(
+            Nemotron3_5AsrProcessorKwargs, tokenizer_init_kwargs=self.tokenizer.init_kwargs
+        )
         return output_kwargs["audio_kwargs"]["subsampling_factor"]
 
     @property
@@ -476,7 +482,5 @@ class Nemotron3_5AsrProcessor(ProcessorMixin):
             prompt_ids.append(self.prompt_dictionary[lang])
         return torch.tensor(prompt_ids, dtype=torch.long)
 
-
-__getattr__ = deprecate_attr(__name__, rename={"Nemotron3_5AsrProcessorKwargs": (ProcessingKwargs, "5.29.0")})
 
 __all__ = ["Nemotron3_5AsrProcessor"]

@@ -19,13 +19,12 @@ from ...audio_utils import AudioInput
 from ...processing_utils import ProcessingKwargs, ProcessorMixin, TextKwargs, Unpack
 from ...tokenization_utils_base import PreTokenizedInput, TextInput
 from ...utils import auto_docstring, logging
-from ...utils.deprecation import deprecate_attr
 
 
 logger = logging.get_logger(__name__)
 
 
-class DeprecatedSeamlessM4TTextKwargs(TextKwargs, total=False):
+class SeamlessM4TTextKwargs(TextKwargs):
     """
     src_lang (`str`, *optional*):
         The source language code for the input text (e.g., "eng" for English, "fra" for French). This is used
@@ -40,12 +39,15 @@ class DeprecatedSeamlessM4TTextKwargs(TextKwargs, total=False):
     tgt_lang: str | None
 
 
-class DeprecatedSeamlessM4TProcessorKwargs(ProcessingKwargs, total=False):
-    text_kwargs: DeprecatedSeamlessM4TTextKwargs
+class SeamlessM4TProcessorKwargs(ProcessingKwargs, total=False):
+    text_kwargs: SeamlessM4TTextKwargs
+    _defaults = {}
 
 
 @auto_docstring
 class SeamlessM4TProcessor(ProcessorMixin):
+    valid_processor_kwargs = SeamlessM4TProcessorKwargs
+
     def __init__(self, feature_extractor, tokenizer):
         super().__init__(feature_extractor, tokenizer)
 
@@ -70,21 +72,7 @@ class SeamlessM4TProcessor(ProcessorMixin):
             raise ValueError(
                 "Text and audios are mututally exclusive when passed to `SeamlessM4T`. Specify one or another."
             )
-
-        # For BC.
-        lang_kwargs = {key: kwargs.pop(key) for key in ("src_lang", "tgt_lang") if key in kwargs}
-        if lang_kwargs:
-            kwargs["text_kwargs"] = kwargs.get("text_kwargs", {}) | lang_kwargs
-
         return super().__call__(text=text, audio=audio, **kwargs)
 
-
-__getattr__ = deprecate_attr(
-    __name__,
-    remove={
-        "SeamlessM4TProcessorKwargs": (DeprecatedSeamlessM4TProcessorKwargs, "5.29.0"),
-        "SeamlessM4TTextKwargs": (DeprecatedSeamlessM4TTextKwargs, "5.29.0"),
-    },
-)
 
 __all__ = ["SeamlessM4TProcessor"]

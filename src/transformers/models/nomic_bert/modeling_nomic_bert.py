@@ -41,7 +41,7 @@ from ...modeling_utils import ALL_ATTENTION_FUNCTIONS, PreTrainedModel
 from ...processing_utils import Unpack
 from ...utils import TransformersKwargs, auto_docstring
 from ...utils.deprecation import deprecate_kwarg
-from ...utils.generic import can_return_tuple, merge_with_config_defaults
+from ...utils.generic import can_return_tuple, maybe_autocast, merge_with_config_defaults
 from ...utils.output_capturing import capture_outputs
 from .configuration_nomic_bert import NomicBertConfig
 
@@ -65,7 +65,7 @@ class NomicBertEmbeddings(nn.Module):
         input_ids: torch.LongTensor | None = None,
         token_type_ids: torch.LongTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
     ) -> torch.Tensor:
         embeddings = inputs_embeds
         if inputs_embeds is None:
@@ -87,7 +87,8 @@ class NomicBertEmbeddings(nn.Module):
 
 
 class NomicBertRotaryEmbedding(nn.Module):
-    def __init__(self, config: NomicBertConfig):
+    @deprecate_kwarg("device", version="5.18")
+    def __init__(self, config: NomicBertConfig, device=None):
         super().__init__()
         self.max_seq_len_cached = config.max_position_embeddings
         self.original_max_seq_len = config.max_position_embeddings
@@ -98,13 +99,14 @@ class NomicBertRotaryEmbedding(nn.Module):
         rope_init_fn: Callable = self.compute_default_rope_parameters
         if self.rope_type != "default":
             rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
-        inv_freq, self.attention_scaling = rope_init_fn(self.config)
+        inv_freq, self.attention_scaling = rope_init_fn(self.config, device)
 
         self.inv_freq = nn.Buffer(inv_freq, persistent=False)
         self.original_inv_freq = nn.Buffer(inv_freq.clone(), persistent=False)
 
     @staticmethod
-    def compute_default_rope_parameters(config: NomicBertConfig, **kwargs) -> tuple[torch.Tensor, float]:
+    @deprecate_kwarg("device", version="5.18")
+    def compute_default_rope_parameters(config: NomicBertConfig, device=None, **kwargs) -> tuple[torch.Tensor, float]:
         """
         Computes the inverse frequencies according to the original RoPE implementation
         Args:
@@ -120,14 +122,23 @@ class NomicBertRotaryEmbedding(nn.Module):
         attention_factor = 1.0  # Unused in this type of RoPE
         # Compute the inverse frequencies
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, dtype=torch.float) / dim))
-        return inv_freq, attention_factor
+        return inv_freq.to(device), attention_factor
 
+    @torch.no_grad()
     @dynamic_rope_update  # power user: used with advanced RoPE types (e.g. dynamic rope)
     def forward(self, x, position_ids):
-        freqs = position_ids[..., None].float() * self.inv_freq.to(device=x.device, dtype=torch.float)
-        emb = torch.cat((freqs, freqs), dim=-1)
-        cos = emb.cos() * self.attention_scaling
-        sin = emb.sin() * self.attention_scaling
+        inv_freq_expanded = (
+            self.inv_freq[None, :, None].expand(position_ids.shape[0], -1, 1).to(dtype=torch.float, device=x.device)
+        )
+        position_ids_expanded = position_ids[:, None, :].float()
+
+        device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
+        # Disable any outside autocast context if any, to really force fp32
+        with maybe_autocast(device_type=device_type, enabled=False):
+            freqs = (inv_freq_expanded @ position_ids_expanded).transpose(1, 2)
+            emb = torch.cat((freqs, freqs), dim=-1)
+            cos = emb.cos() * self.attention_scaling
+            sin = emb.sin() * self.attention_scaling
 
         return cos.to(dtype=x.dtype), sin.to(dtype=x.dtype)
 
@@ -209,7 +220,6 @@ class NomicBertAttention(nn.Module):
         self.v_proj = nn.Linear(config.hidden_size, config.num_attention_heads * self.head_dim, bias=False)
         self.o_proj = nn.Linear(config.num_attention_heads * self.head_dim, config.hidden_size, bias=False)
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -279,7 +289,7 @@ class NomicBertLayer(GradientCheckpointingLayer):
         attention_mask: torch.Tensor | None = None,
         position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
         **kwargs: Unpack[TransformersKwargs],
-    ) -> torch.Tensor:
+    ) -> torch.FloatTensor:
         residual = hidden_states
         attention_output, _ = self.self_attn(
             hidden_states,
@@ -315,7 +325,7 @@ class NomicBertLMPredictionHead(nn.Module):
 
 @auto_docstring
 class NomicBertPreTrainedModel(PreTrainedModel):
-    config: NomicBertConfig
+    config_class = NomicBertConfig
     base_model_prefix = "nomic_bert"
     supports_gradient_checkpointing = True
     _supports_flash_attn = True
@@ -331,6 +341,7 @@ class NomicBertPreTrainedModel(PreTrainedModel):
     # and causing mismatch when loading from a checkpoint that doesn't have them
     _keys_to_ignore_on_load_unexpected = ["inv_freq", "original_inv_freq"]
 
+    @torch.no_grad()
     def _init_weights(self, module):
         """Initialize the weights"""
         super()._init_weights(module)
@@ -360,7 +371,7 @@ class NomicBertPooler(nn.Module):
 class NomicBertModel(NomicBertPreTrainedModel):
     _no_split_modules = ["NomicBertEmbeddings", "NomicBertLayer"]
 
-    def __init__(self, config: NomicBertConfig, add_pooling_layer=False):
+    def __init__(self, config, add_pooling_layer=False):
         r"""
         add_pooling_layer (`bool`, *optional*, defaults to `False`):
             Whether to add a pooling layer.
@@ -393,7 +404,7 @@ class NomicBertModel(NomicBertPreTrainedModel):
         attention_mask: torch.Tensor | None = None,
         token_type_ids: torch.LongTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor] | BaseModelOutputWithPooling:
         if (input_ids is None) ^ (inputs_embeds is not None):
@@ -478,7 +489,7 @@ class NomicBertForMaskedLM(NomicBertPreTrainedModel):
         "cls.predictions.decoder.bias": "cls.predictions.bias",
     }
 
-    def __init__(self, config: NomicBertConfig):
+    def __init__(self, config):
         super().__init__(config)
 
         self.nomic_bert = NomicBertModel(config)
@@ -506,6 +517,12 @@ class NomicBertForMaskedLM(NomicBertPreTrainedModel):
         labels: torch.Tensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor] | MaskedLMOutput:
+        r"""
+        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Labels for computing the masked language modeling loss. Indices should be in `[-100, 0, ...,
+            config.vocab_size]` (see `input_ids` docstring) Tokens with indices set to `-100` are ignored (masked), the
+            loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`
+        """
         outputs = self.nomic_bert(
             input_ids,
             attention_mask=attention_mask,
@@ -539,7 +556,7 @@ class NomicBertForMaskedLM(NomicBertPreTrainedModel):
     """
 )
 class NomicBertForSequenceClassification(NomicBertPreTrainedModel):
-    def __init__(self, config: NomicBertConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.config = config
@@ -565,6 +582,12 @@ class NomicBertForSequenceClassification(NomicBertPreTrainedModel):
         labels: torch.Tensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor] | SequenceClassifierOutput:
+        r"""
+        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
+            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
+            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
+        """
         outputs = self.nomic_bert(
             input_ids,
             attention_mask=attention_mask,
@@ -613,7 +636,7 @@ class NomicBertForSequenceClassification(NomicBertPreTrainedModel):
 
 @auto_docstring
 class NomicBertForTokenClassification(NomicBertPreTrainedModel):
-    def __init__(self, config: NomicBertConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
 
@@ -639,6 +662,10 @@ class NomicBertForTokenClassification(NomicBertPreTrainedModel):
         labels: torch.Tensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor] | TokenClassifierOutput:
+        r"""
+        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Labels for computing the token classification loss. Indices should be in `[0, ..., config.num_labels - 1]`.
+        """
         outputs = self.nomic_bert(
             input_ids,
             attention_mask=attention_mask,

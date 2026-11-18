@@ -1,6 +1,7 @@
 from typing import ClassVar
 
 import torch
+import torch.utils.checkpoint
 from torch import nn
 
 from transformers.models.paligemma.modeling_paligemma import PaliGemmaForConditionalGeneration
@@ -22,12 +23,12 @@ class NewTaskModelForNewTask(PaliGemmaForConditionalGeneration):
     def forward(
         self,
         input_ids: torch.LongTensor = None,
-        pixel_values: torch.Tensor = None,
+        pixel_values: torch.FloatTensor = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         token_type_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
         output_attentions: bool | None = None,
@@ -43,7 +44,7 @@ class NewTaskModelForNewTask(PaliGemmaForConditionalGeneration):
             pixel_values=pixel_values,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             token_type_ids=token_type_ids,
             inputs_embeds=inputs_embeds,
             labels=labels,

@@ -15,12 +15,11 @@
 Handler for the /v1/audio/transcriptions endpoint.
 """
 
-import base64
+import io
 from typing import TYPE_CHECKING
 
-from ...audio_utils import load_audio
 from ...utils import logging
-from ...utils.import_utils import is_serve_available
+from ...utils.import_utils import is_serve_available, requires
 
 
 if is_serve_available():
@@ -124,12 +123,15 @@ class TranscriptionHandler:
         return await self._non_streaming(gen_manager, audio_model, audio_processor, audio_inputs)
 
     @staticmethod
+    @requires(backends=("librosa",))
     def _prepare_audio_inputs(
         file_bytes: bytes, audio_processor: "ProcessorMixin", audio_model: "PreTrainedModel"
     ) -> dict:
         """Load audio bytes and convert to model inputs."""
+        import librosa
+
         sampling_rate = audio_processor.feature_extractor.sampling_rate
-        audio_array = load_audio(base64.b64encode(file_bytes).decode("ascii"), sampling_rate=sampling_rate)
+        audio_array, _ = librosa.load(io.BytesIO(file_bytes), sr=sampling_rate, mono=True)
         audio_inputs = audio_processor(audio_array, sampling_rate=sampling_rate, return_tensors="pt").to(
             audio_model.device
         )

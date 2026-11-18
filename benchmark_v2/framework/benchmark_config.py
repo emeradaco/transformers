@@ -42,10 +42,7 @@ def is_fa2_or_kernel_available() -> bool:
     try:
         from kernels import get_kernel
 
-        from transformers.modeling_flash_attention_utils import FLASH_ATTN_KERNEL_VERSIONS
-
-        repo_id = "kernels-community/flash-attn2"
-        get_kernel(repo_id, version=FLASH_ATTN_KERNEL_VERSIONS[repo_id])
+        get_kernel("kernels-community/flash-attn2", version=1)
     except Exception as _:
         logger.warning(
             "flash_attention_2 is not available. kernels is installed, but the flash_attn kernel is not available."
@@ -201,10 +198,6 @@ class BenchmarkConfig:
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
-            "prompt_length_policy": "repeat_tokens_to_exact_length",
-            "eos_token_id": -1,
-            "allow_block_sharing": False if self.continuous_batching else None,
-            "auto_switch_to_flash": False if self.continuous_batching else None,
             "warmup_iterations": self.warmup_iterations,
             "measurement_iterations": self.measurement_iterations,
             "gpu_monitoring": self.gpu_monitoring,

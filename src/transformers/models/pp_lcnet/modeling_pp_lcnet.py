@@ -328,14 +328,14 @@ class PPLCNetForImageClassification(PPLCNetPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        pixel_values: torch.Tensor | None = None,
+        pixel_values: torch.FloatTensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithNoAttention:
         r"""
         Examples:
 
         ```python
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
         >>> from PIL import Image
         >>> from transformers import AutoModelForImageClassification, AutoImageProcessor

@@ -16,8 +16,6 @@ Some of the functions here are derived from the `accelerate` library, with some 
 and simplicity/ease of use.
 """
 
-from __future__ import annotations
-
 import copy
 import functools
 import inspect
@@ -95,7 +93,7 @@ def get_module_size_with_ties(
     return module_size_with_ties, tied_module_names, tied_modules
 
 
-def check_and_set_device_map(device_map: torch.device | int | str | dict | None) -> dict | str | None:
+def check_and_set_device_map(device_map: "torch.device | int | str | dict | None") -> dict | str | None:
     from ..modeling_utils import get_torch_context_manager_or_global_device
 
     # Potentially detect context manager or global device, and use it (only if no device_map was provided)
@@ -144,8 +142,8 @@ def check_and_set_device_map(device_map: torch.device | int | str | dict | None)
 
 
 def compute_module_sizes(
-    model: PreTrainedModel,
-    hf_quantizer: HfQuantizer | None = None,
+    model: "PreTrainedModel",
+    hf_quantizer: "HfQuantizer | None" = None,
     buffers_only: bool = False,
     only_modules: bool = True,
 ) -> tuple[dict[str, int], dict[str, int]]:
@@ -193,7 +191,7 @@ def compute_module_sizes(
     return all_module_sizes, leaves_module_sizes
 
 
-def compute_module_total_buffer_size(model: nn.Module, hf_quantizer: HfQuantizer | None = None):
+def compute_module_total_buffer_size(model: nn.Module, hf_quantizer: "HfQuantizer | None" = None):
     """
     Compute the total size of buffers in each submodule of a given model.
     """
@@ -240,11 +238,12 @@ def get_max_memory(max_memory: dict[int | str, int | str] | None = None):
 
 
 def get_balanced_memory(
-    model: PreTrainedModel,
+    model: "PreTrainedModel",
     max_memory: dict[int | str, int | str] | None = None,
     no_split_module_classes: set[str] | None = None,
-    hf_quantizer: HfQuantizer | None = None,
+    hf_quantizer: "HfQuantizer | None" = None,
     low_zero: bool = False,
+    no_placement_params: set[str] | None = None,
 ):
     """
     Compute a `max_memory` dictionary for [`infer_auto_device_map`] that will balance the use of each available GPU.
@@ -270,6 +269,11 @@ def get_balanced_memory(
         low_zero (`bool`, *optional*):
             Minimizes the number of weights on GPU 0, which is convenient when it's used for other operations (like the
             Transformers generate function).
+        no_placement_params (`set[str]`, *optional*):
+            Parameter names (relative to their no-split module, see `_no_placement_params`) that
+            [`infer_auto_device_map`] will exclude from placement when they do not fit an accelerator. They are
+            excluded from the per-device budget here too: counting a ~100 GB table that will never be placed inflates
+            every GPU's share up to its physical limit and leaves no headroom for loading temporaries.
     """
     # Get default / clean up max_memory
     user_not_set_max_memory = max_memory is None
@@ -297,13 +301,30 @@ def get_balanced_memory(
                     break  # only one device
 
     module_sizes, leave_modules_sizes = compute_module_sizes(model, hf_quantizer)
-    per_gpu = module_sizes[""] // (num_devices - 1 if low_zero else num_devices)
+    # Size of the no-placement parameters, both in total and per no-split module that holds them
+    no_placement_sizes: dict[str, int] = defaultdict(int)
+    if no_placement_params:
+        no_split_names = {
+            k for k, v in model.named_modules() if v.__class__.__name__ in (no_split_module_classes or [])
+        }
+        for module_name in no_split_names:
+            module = model.get_submodule(module_name)
+            for param_name, param in module.named_parameters():
+                if param_name in no_placement_params:
+                    dtype_size = (
+                        hf_quantizer.param_element_size(model, f"{module_name}.{param_name}", param)
+                        if hf_quantizer is not None
+                        else param.element_size()
+                    )
+                    no_placement_sizes[module_name] += param.numel() * dtype_size
+    total_size = module_sizes[""] - sum(no_placement_sizes.values())
+    per_gpu = total_size // (num_devices - 1 if low_zero else num_devices)
 
     # We can't just set the memory to model_size // num_devices as it will end being too small: each GPU will get
     # slightly less layers and some layers will end up offload at the end. So this function computes a buffer size to
     # add which is the biggest of:
     # - the size of the biggest no split block (if applicable)
-    # - the biggest leaf param (e.g. usually the embedding is a huge param compared to others)
+    # - the mean of the layer sizes
     if no_split_module_classes is None:
         no_split_module_classes = []
     elif not isinstance(no_split_module_classes, (list, tuple, set)):
@@ -313,13 +334,14 @@ def get_balanced_memory(
     # may have different sizes depending on the layer idx, even if it's the same class (e.g. if we have either mlp or moe inside
     # the DecoderLayer depending on the layer idx). For this reason, we have to find ALL layers matching the _no_split_module class
     # and take the max, not just the first layer matching the class (as it may be smaller than future layers)
-    biggest_no_split_module = 0
+    buffer = 0
     if len(no_split_module_classes) > 0:
         all_no_split_modules = {k for k, v in model.named_modules() if v.__class__.__name__ in no_split_module_classes}
-        biggest_no_split_module = max(module_sizes[k] for k in all_no_split_modules)
+        buffer = max(module_sizes[k] - no_placement_sizes[k] for k in all_no_split_modules)
 
-    biggest_leaf = max(leave_modules_sizes.values(), default=0)
-    buffer = int(1.25 * max(biggest_no_split_module, biggest_leaf))
+    leaves_total = sum(leave_modules_sizes.values()) - sum(no_placement_sizes.values())
+    mean_leaves = int(leaves_total / max(len(leave_modules_sizes), 1))
+    buffer = int(1.25 * max(buffer, mean_leaves))
     per_gpu += buffer
 
     # Sorted list of GPUs id (we may have some gpu ids not included in the our max_memory list - let's ignore them)
@@ -331,17 +353,17 @@ def get_balanced_memory(
         max_memory[idx] = min(max_memory[0] if low_zero and idx == 0 else per_gpu, max_memory[idx])
 
     if low_zero:
-        min_zero = max(0, module_sizes[""] - sum(max_memory[i] for i in range(1, num_devices)))
+        min_zero = max(0, total_size - sum([max_memory[i] for i in range(1, num_devices)]))
         max_memory[0] = min(min_zero, max_memory[0])
 
     return max_memory
 
 
 def _get_device_map(
-    model: PreTrainedModel,
+    model: "PreTrainedModel",
     device_map: dict | str | None,
     max_memory: dict | None,
-    hf_quantizer: HfQuantizer | None,
+    hf_quantizer: "HfQuantizer | None",
 ) -> dict:
     """Compute the final `device_map` to use if we passed a value in ['auto', 'balanced', 'balanced_low_0', 'sequential'].
     Otherwise, we check for any device inconsistencies in the device_map.
@@ -357,6 +379,7 @@ def _get_device_map(
                 no_split_module_classes=no_split_modules,
                 hf_quantizer=hf_quantizer,
                 low_zero=(device_map == "balanced_low_0"),
+                no_placement_params=no_placement_params,
             )
         else:
             inferred_max_memory = get_max_memory(max_memory)
@@ -459,7 +482,7 @@ def get_device(device_map: dict | None, param_name: str, valid_torch_device: boo
 
 
 def accelerate_disk_offload(
-    model: PreTrainedModel,
+    model: "PreTrainedModel",
     disk_offload_folder: str | None,
     checkpoint_files: list[str] | None,
     device_map: dict,
@@ -545,7 +568,7 @@ def offload_weight(weight: torch.Tensor, weight_name: str, offload_folder: str |
     return offload_index
 
 
-def load_offloaded_parameter(model: PreTrainedModel, param_name: str) -> torch.Tensor:
+def load_offloaded_parameter(model: "PreTrainedModel", param_name: str) -> torch.Tensor:
     """Load `param_name` from disk, if it was offloaded due to the device_map, and thus lives as a meta parameter
     inside `model`.
     This is needed when resaving a model, when some parameters were offloaded (we need to load them from disk, to
@@ -576,7 +599,7 @@ def _init_infer_auto_device_map(
     max_memory: dict[int | str, int | str] | None = None,
     no_split_module_classes: set[str] | None = None,
     tied_parameters: list[list[str]] | None = None,
-    hf_quantizer: HfQuantizer | None = None,
+    hf_quantizer: "HfQuantizer | None" = None,
 ) -> tuple[
     list[int | str],
     dict[int | str, int | str],
@@ -649,7 +672,7 @@ def infer_auto_device_map(
     clean_result: bool = True,
     offload_buffers: bool = False,
     tied_parameters: list[list[str]] | None = None,
-    hf_quantizer: HfQuantizer | None = None,
+    hf_quantizer: "HfQuantizer | None" = None,
     no_placement_params: set[str] | None = None,
 ):
     """
@@ -740,7 +763,7 @@ def infer_auto_device_map(
 
         # Then we keep track of all the parameters that are tied to the current module, but not in the current module
         tied_params = sum(
-            ([p for p in tied_group if name + "." not in p + "."] for tied_group in tied_param_groups), []
+            [[p for p in tied_group if name + "." not in p + "."] for tied_group in tied_param_groups], []
         )
 
         if verbose and len(tied_params) > 0:

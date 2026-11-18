@@ -26,8 +26,8 @@ from ...cache_utils import Cache, DynamicCache
 from ...integrations import use_experts_implementation
 from ...masking_utils import create_causal_mask, create_recurrent_attention_mask
 from ...modeling_layers import GradientCheckpointingLayer
-from ...modeling_outputs import MoeCausalLMOutputWithPast, MoeModelOutputWithPast
-from ...modeling_utils import PreTrainedModel, slice_logits_to_keep
+from ...modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
+from ...modeling_utils import PreTrainedModel
 from ...models.deepseek_v3.modeling_deepseek_v3 import DeepseekV3MoE, DeepseekV3TopkRouter
 from ...models.jamba.modeling_jamba import JambaAttention
 from ...models.llama.modeling_llama import LlamaRMSNorm
@@ -36,17 +36,12 @@ from ...models.zamba.modeling_zamba import ZambaForCausalLM
 from ...models.zamba2.modeling_zamba2 import Zamba2MambaMixer, Zamba2RMSNormGated
 from ...processing_utils import Unpack
 from ...utils import TransformersKwargs, auto_docstring, can_return_tuple, logging
-from ...utils.deprecation import deprecate_kwarg
 from ...utils.generic import merge_with_config_defaults
-from ...utils.output_capturing import OutputRecorder, capture_outputs
+from ...utils.output_capturing import capture_outputs
 from .configuration_nemotron_h import NemotronHConfig
 
 
 logger = logging.get_logger(__name__)
-
-
-class NemotronHRMSNormGated(Zamba2RMSNormGated):
-    pass
 
 
 class NemotronHMamba2Mixer(Zamba2MambaMixer):
@@ -79,21 +74,14 @@ class NemotronHMamba2Mixer(Zamba2MambaMixer):
             projection_size,
             bias=config.use_bias,
         )
-        self.norm = NemotronHRMSNormGated(
+        self.norm = Zamba2RMSNormGated(
             self.intermediate_size, group_size=self.intermediate_size // self.n_groups, eps=config.layer_norm_epsilon
         )
         self.out_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=config.use_bias)
 
 
 class NemotronHRMSNorm(LlamaRMSNorm):
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        input_dtype = hidden_states.dtype
-        hidden_states = hidden_states.to(torch.float32)
-        variance = hidden_states.pow(2).mean(-1, keepdim=True)
-        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
-        # Unlike Llama, the weight multiply is kept in fp32 and only the result is cast back to the input
-        # dtype, matching the reference implementation.
-        return (self.weight.to(torch.float32) * hidden_states).to(input_dtype)
+    pass
 
 
 class NemotronHMLP(NemotronMLP, nn.Module):
@@ -217,15 +205,14 @@ class NemotronHTopkRouter(DeepseekV3TopkRouter):
 
 
 class NemotronHAttention(JambaAttention):
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        return super().forward(hidden_states, attention_mask, cache, **kwargs)
+        return super().forward(hidden_states, attention_mask, past_key_values, **kwargs)
 
 
 MIXER_TYPES = {
@@ -261,11 +248,10 @@ class NemotronHBlock(GradientCheckpointingLayer):
         self.block_type = config.layers_block_type[layer_idx]
         self.mixer = MIXER_TYPES[self.block_type](config, layer_idx=layer_idx)
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         hidden_states,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
         use_cache: bool | None = False,
@@ -277,14 +263,14 @@ class NemotronHBlock(GradientCheckpointingLayer):
         if self.block_type == "linear_attention":
             hidden_states = self.mixer(
                 hidden_states,
-                cache=cache,
+                cache_params=past_key_values,
                 attention_mask=attention_mask,
                 **kwargs,
             )
         elif self.block_type == "full_attention":
             hidden_states, _ = self.mixer(
                 hidden_states=hidden_states,
-                cache=cache,
+                past_key_values=past_key_values,
                 attention_mask=attention_mask,
                 position_ids=position_ids,
                 use_cache=use_cache,
@@ -303,7 +289,7 @@ class NemotronHPreTrainedModel(PreTrainedModel):
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
     _no_split_modules = ["NemotronHBlock"]
-    _skip_keys_device_placement = ["cache"]
+    _skip_keys_device_placement = ["past_key_values"]
     _supports_flash_attn = True
     _supports_flash_attn_2 = True
     _supports_sdpa = True
@@ -313,13 +299,13 @@ class NemotronHPreTrainedModel(PreTrainedModel):
     _can_record_outputs = {
         "hidden_states": NemotronHBlock,
         "attentions": NemotronHAttention,
-        "router_logits": OutputRecorder(NemotronHTopkRouter, index=0),
     }
     _keep_in_fp32_modules_strict = [
         "e_score_correction_bias",
     ]
     _keys_to_ignore_on_load_unexpected = [r"mtp.*"]
 
+    @torch.no_grad()
     def _init_weights(self, module):
         """Initialize the weights."""
         super()._init_weights(module)
@@ -382,7 +368,7 @@ class NemotronHPreTrainedModel(PreTrainedModel):
 
 
 class NemotronHModel(NemotronHPreTrainedModel):
-    def __init__(self, config: NemotronHConfig):
+    def __init__(self, config):
         super().__init__(config)
 
         self.embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
@@ -400,30 +386,29 @@ class NemotronHModel(NemotronHPreTrainedModel):
 
     @merge_with_config_defaults
     @capture_outputs
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
         inputs_embeds: torch.LongTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         use_cache: bool | None = None,
         attention_mask: torch.Tensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
-    ) -> tuple | MoeModelOutputWithPast:
+    ) -> tuple | BaseModelOutputWithPast:
         if (input_ids is None) ^ (inputs_embeds is not None):  # ^ is python for xor
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
 
         if inputs_embeds is None:
             inputs_embeds = self.embeddings(input_ids)
 
-        if use_cache and cache is None:
-            cache = DynamicCache(config=self.config)
+        if use_cache and past_key_values is None:
+            past_key_values = DynamicCache(config=self.config)
 
         hidden_states = inputs_embeds
 
         if position_ids is None:
-            past_seen_tokens = cache.get_seq_length() if cache is not None else 0
+            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
             position_ids = torch.arange(hidden_states.shape[1], device=hidden_states.device) + past_seen_tokens
             position_ids = position_ids.unsqueeze(0)
 
@@ -435,7 +420,7 @@ class NemotronHModel(NemotronHPreTrainedModel):
                 "config": self.config,
                 "inputs_embeds": inputs_embeds,
                 "attention_mask": attention_mask,
-                "cache": cache,
+                "past_key_values": past_key_values,
                 "position_ids": position_ids,
             }
             # Create the masks
@@ -449,16 +434,16 @@ class NemotronHModel(NemotronHPreTrainedModel):
                 hidden_states,
                 attention_mask=causal_mask_mapping.get(mixer_block.block_type),
                 position_ids=position_ids,
-                cache=cache,
+                past_key_values=past_key_values,
                 use_cache=use_cache,
                 **kwargs,
             )
 
         hidden_states = self.norm_f(hidden_states)
 
-        return MoeModelOutputWithPast(
+        return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
-            cache=cache if use_cache else None,
+            past_key_values=past_key_values if use_cache else None,
         )
 
 
@@ -466,15 +451,14 @@ class NemotronHForCausalLM(ZambaForCausalLM):
     _tied_weights_keys = {}
 
     @staticmethod
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
-    def create_masks_for_generate(config, inputs_embeds, attention_mask, cache, position_ids=None, **_):
+    def create_masks_for_generate(config, inputs_embeds, attention_mask, past_key_values, position_ids=None, **_):
         # Nemotron-H layer_types include non-attention block types (moe / mlp) that the default dispatch
         # table doesn't enumerate, so we return both masks the forward needs as a dict.
         mask_kwargs = {
             "config": config.get_text_config(),
             "inputs_embeds": inputs_embeds,
             "attention_mask": attention_mask,
-            "cache": cache,
+            "past_key_values": past_key_values,
             "position_ids": position_ids,
         }
         return {
@@ -484,44 +468,43 @@ class NemotronHForCausalLM(ZambaForCausalLM):
 
     @can_return_tuple
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
         logits_to_keep: int | torch.Tensor = 0,
         **kwargs,
-    ) -> tuple | MoeCausalLMOutputWithPast:
+    ) -> tuple | CausalLMOutputWithPast:
         outputs = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             **kwargs,
         )
 
         hidden_states = outputs[0]
-        hidden_states = slice_logits_to_keep(hidden_states, logits_to_keep)
-        logits = self.lm_head(hidden_states).float()
+        # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
+        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+        logits = self.lm_head(hidden_states[:, slice_indices, :]).float()
 
         loss = None
         if labels is not None:
             loss = self.loss_function(logits, labels, self.vocab_size, **kwargs)
 
-        return MoeCausalLMOutputWithPast(
+        return CausalLMOutputWithPast(
             loss=loss,
             logits=logits,
-            cache=outputs.cache,
+            past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
-            router_logits=outputs.router_logits,
         )
 
 

@@ -21,16 +21,22 @@ from ...image_utils import ImageInput
 from ...processing_utils import MultiModalData, ProcessingKwargs, ProcessorMixin, Unpack
 from ...tokenization_utils_base import TextInput
 from ...utils import auto_docstring
-from ...utils.deprecation import deprecate_attr
 from ...video_utils import VideoInput
+
+
+class Ernie4_5_VLMoeProcessorKwargs(ProcessingKwargs, total=False):
+    _defaults = {
+        "text_kwargs": {
+            "padding": False,
+            "return_token_type_ids": False,
+            "return_mm_token_type_ids": True,
+        },
+    }
 
 
 @auto_docstring
 class Ernie4_5_VLMoeProcessor(ProcessorMixin):
-    text_kwargs = {
-        "return_token_type_ids": False,
-    }
-    return_mm_token_type_ids = True
+    valid_processor_kwargs = Ernie4_5_VLMoeProcessorKwargs
 
     def __init__(self, image_processor=None, tokenizer=None, video_processor=None, chat_template=None, **kwargs):
         self.image_token = tokenizer.image_token
@@ -67,7 +73,7 @@ class Ernie4_5_VLMoeProcessor(ProcessorMixin):
         images: ImageInput | None = None,
         text: TextInput | list[TextInput] | None = None,
         videos: VideoInput | None = None,
-        **kwargs: Unpack[ProcessingKwargs],
+        **kwargs: Unpack[Ernie4_5_VLMoeProcessorKwargs],
     ):
         model_inputs = super().__call__(images=images, text=text, videos=videos, **kwargs)
         model_inputs["moe_mm_token_type_ids"] = self.create_moe_mm_token_type_ids(model_inputs["input_ids"])
@@ -138,10 +144,10 @@ class Ernie4_5_VLMoeProcessor(ProcessorMixin):
             input modalities, along with other useful data.
         """
 
-        merged_kwargs = self._merge_kwargs(**kwargs)
         vision_data = {}
         if image_sizes is not None:
-            images_kwargs = merged_kwargs["images_kwargs"]
+            images_kwargs = Ernie4_5_VLMoeProcessorKwargs._defaults.get("images_kwargs", {})
+            images_kwargs.update(kwargs)
             merge_size = images_kwargs.get("merge_size", None) or self.image_processor.merge_size
 
             num_image_patches = [
@@ -152,14 +158,15 @@ class Ernie4_5_VLMoeProcessor(ProcessorMixin):
             vision_data.update({"num_image_tokens": num_image_tokens, "num_image_patches": num_image_patches})
 
         if video_sizes is not None:
-            videos_kwargs = merged_kwargs["videos_kwargs"]
-            merge_size = videos_kwargs.get("merge_size", None) or self.video_processor.merge_size
+            videos_kwargs = Ernie4_5_VLMoeProcessorKwargs._defaults.get("videos_kwargs", {})
+            videos_kwargs.update(kwargs)
             temporal_merge_size = (
                 videos_kwargs.get("temporal_patch_size", None) or self.video_processor.temporal_patch_size
             )
 
             num_video_patches = [
-                self.video_processor.get_num_of_video_patches(*video_size, videos_kwargs) for video_size in video_sizes
+                self.video_processor.get_number_of_video_patches(*video_size, videos_kwargs)
+                for video_size in video_sizes
             ]
             num_video_tokens = [
                 (num_patches // merge_size**2 // temporal_merge_size) for num_patches in num_video_patches
@@ -168,7 +175,5 @@ class Ernie4_5_VLMoeProcessor(ProcessorMixin):
 
         return MultiModalData(**vision_data)
 
-
-__getattr__ = deprecate_attr(__name__, rename={"Ernie4_5_VLMoeProcessorKwargs": (ProcessingKwargs, "5.29.0")})
 
 __all__ = ["Ernie4_5_VLMoeProcessor"]

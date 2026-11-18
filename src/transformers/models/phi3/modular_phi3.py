@@ -26,7 +26,6 @@ from ...modeling_flash_attention_utils import FlashAttentionKwargs
 from ...modeling_utils import ALL_ATTENTION_FUNCTIONS
 from ...processing_utils import Unpack
 from ...utils import logging
-from ...utils.deprecation import deprecate_kwarg
 from ..mistral.modeling_mistral import (
     MistralDecoderLayer,
     MistralForCausalLM,
@@ -55,7 +54,7 @@ class Phi3MLP(nn.Module):
         self.down_proj = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
         self.activation_fn = ACT2FN[config.hidden_act]
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: torch.FloatTensor) -> torch.FloatTensor:
         up_states = self.gate_up_proj(hidden_states)
 
         gate, up_states = up_states.chunk(2, dim=-1)
@@ -116,13 +115,12 @@ class Phi3Attention(nn.Module):
         self.o_proj = nn.Linear(config.num_attention_heads * self.head_dim, config.hidden_size, bias=False)
         self.qkv_proj = nn.Linear(config.hidden_size, op_size, bias=False)
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         hidden_states: torch.Tensor,
         position_embeddings: tuple[torch.Tensor, torch.Tensor],
         attention_mask: torch.Tensor | None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         **kwargs: Unpack[FlashAttentionKwargs],
     ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor] | None]:
         input_shape = hidden_states.shape[:-1]
@@ -141,8 +139,8 @@ class Phi3Attention(nn.Module):
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
 
-        if cache is not None:
-            key_states, value_states = cache.update(key_states, value_states, self.layer_idx, kwargs=kwargs)
+        if past_key_values is not None:
+            key_states, value_states = past_key_values.update(key_states, value_states, self.layer_idx)
 
         attention_interface: Callable = ALL_ATTENTION_FUNCTIONS.get_interface(
             self.config._attn_implementation, eager_attention_forward
@@ -174,13 +172,12 @@ class Phi3DecoderLayer(MistralDecoderLayer):
         self.resid_attn_dropout = nn.Dropout(config.resid_pdrop)
         self.resid_mlp_dropout = nn.Dropout(config.resid_pdrop)
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         use_cache: bool | None = False,
         position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
         **kwargs: Unpack[FlashAttentionKwargs],
@@ -192,7 +189,7 @@ class Phi3DecoderLayer(MistralDecoderLayer):
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             use_cache=use_cache,
             position_embeddings=position_embeddings,
             **kwargs,
@@ -211,11 +208,10 @@ class Phi3PreTrainedModel(MistralPreTrainedModel):
 
 
 class Phi3ForCausalLM(MistralForCausalLM):
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def prepare_inputs_for_generation(
         self,
         input_ids,
-        cache=None,
+        past_key_values=None,
         attention_mask=None,
         inputs_embeds=None,
         position_ids=None,
@@ -229,19 +225,18 @@ class Phi3ForCausalLM(MistralForCausalLM):
         # When the first time input length reached long and short factor switching point, enforce re-compute cache
         # It will cause downside of slower at this single token position, however, better than current failure.
         if (
-            cache
+            past_key_values
             and hasattr(self.config, "original_max_position_embeddings")
             and input_ids.shape[1] >= self.config.original_max_position_embeddings + 1
         ):
-            past_length = cache.get_seq_length()
+            past_length = past_key_values.get_seq_length()
             if past_length <= self.config.original_max_position_embeddings:
-                cache = None
-                kwargs["next_sequence_length"] = None
+                past_key_values = None
 
         model_inputs = GenerationMixin.prepare_inputs_for_generation(
             self,
             input_ids=input_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             attention_mask=attention_mask,
             inputs_embeds=inputs_embeds,
             position_ids=position_ids,

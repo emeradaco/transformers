@@ -21,7 +21,6 @@ from ...activations import ACT2FN
 from ...cache_utils import Cache
 from ...processing_utils import Unpack
 from ...utils import logging
-from ...utils.deprecation import deprecate_kwarg
 from ..granitemoe.modeling_granitemoe import (
     GraniteMoeDecoderLayer,
     GraniteMoeForCausalLM,
@@ -89,18 +88,17 @@ class GraniteMoeSharedDecoderLayer(GraniteMoeDecoderLayer):
         super().__init__(config, layer_idx)
         self.shared_mlp = None if config.shared_intermediate_size == 0 else GraniteMoeSharedMLP(config)
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         hidden_states: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         output_attentions: bool | None = False,
         use_cache: bool | None = False,
         position_embeddings: tuple[torch.Tensor, torch.Tensor] | None = None,
         **kwargs: Unpack[GraniteFlashAttentionKwargs],
-    ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor] | None]:
+    ) -> tuple[torch.FloatTensor, tuple[torch.FloatTensor, torch.FloatTensor] | None]:
         residual = hidden_states
         hidden_states = self.input_layernorm(hidden_states)
 
@@ -109,7 +107,7 @@ class GraniteMoeSharedDecoderLayer(GraniteMoeDecoderLayer):
             hidden_states=hidden_states,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             output_attentions=output_attentions,
             use_cache=use_cache,
             position_embeddings=position_embeddings,

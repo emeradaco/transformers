@@ -106,11 +106,8 @@ class DiaConfig(PreTrainedConfig):
     """
 
     model_type = "dia"
-    keys_to_ignore_at_inference = ["cache"]
-    sub_configs_defaults = {
-        "encoder_config": DiaEncoderConfig,
-        "decoder_config": DiaDecoderConfig,
-    }
+    keys_to_ignore_at_inference = ["past_key_values"]
+    sub_configs = {"encoder_config": DiaEncoderConfig, "decoder_config": DiaDecoderConfig}
 
     encoder_config: DiaEncoderConfig | dict | None = None
     decoder_config: DiaDecoderConfig | dict | None = None
@@ -124,7 +121,13 @@ class DiaConfig(PreTrainedConfig):
     use_cache: bool = True
 
     def __post_init__(self, **kwargs):
-        super().__post_init__(**kwargs)
+        if isinstance(self.encoder_config, dict):
+            self.encoder_config = DiaEncoderConfig(**self.encoder_config)
+        if isinstance(self.decoder_config, dict):
+            self.decoder_config = DiaDecoderConfig(**self.decoder_config)
+
+        self.encoder_config = self.encoder_config if self.encoder_config is not None else DiaEncoderConfig()
+        self.decoder_config = self.decoder_config if self.decoder_config is not None else DiaDecoderConfig()
         self.delay_pattern = (
             self.delay_pattern if self.delay_pattern is not None else [0, 8, 9, 10, 11, 12, 13, 14, 15]
         )
@@ -150,6 +153,8 @@ class DiaConfig(PreTrainedConfig):
                 "Please set it directly on `DiaDecoderConfig` instead."
             )
             self.decoder_config.bos_token_id = self.bos_token_id
+
+        super().__post_init__(**kwargs)
 
     def validate_architecture(self):
         """Part of `@strict`-powered validation. Validates the architecture of the config."""

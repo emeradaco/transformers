@@ -92,7 +92,6 @@ class CanaryModelTester:
             subsampling_factor=self.subsampling_factor,
             subsampling_conv_channels=self.subsampling_conv_channels,
             scale_input=False,
-            layerdrop=0.0,  # unlike ParakeetEncoderModelTester, set directly here; move to __init__ if more dropout attrs need zeroing
         )
         decoder_config = CanaryDecoderConfig(
             vocab_size=self.vocab_size,
@@ -257,8 +256,8 @@ class CanaryModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMix
             # loss is at first position
             if "labels" in inputs_dict:
                 correct_outlen += 1  # loss is added to beginning
-            if "cache" in outputs:
-                correct_outlen += 1  # cache have been returned
+            if "past_key_values" in outputs:
+                correct_outlen += 1  # past_key_values have been returned
 
             self.assertEqual(out_len, correct_outlen)
 
@@ -401,12 +400,12 @@ class CanaryModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMix
         pass
 
     @is_flaky(description="Large difference with A10. Still flaky after setting larger tolerance")
-    def test_generate_continue_from_cache(self):
-        super().test_generate_continue_from_cache()
+    def test_generate_continue_from_past_key_values(self):
+        super().test_generate_continue_from_past_key_values()
 
     # Overridden because the head count comes from the decoder sub-config (mirrors `DiaModelTest`).
     def _check_attentions_for_generate(
-        self, batch_size, attentions, prompt_length, output_length, config, decoder_cache
+        self, batch_size, attentions, prompt_length, output_length, config, decoder_past_key_values
     ):
         self.assertIsInstance(attentions, tuple)
         self.assertListEqual(
@@ -414,8 +413,8 @@ class CanaryModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMix
         )
         self.assertEqual(len(attentions), (output_length - prompt_length))
 
-        use_cache = decoder_cache is not None
-        has_static_cache = isinstance(decoder_cache, StaticCache)
+        use_cache = decoder_past_key_values is not None
+        has_static_cache = isinstance(decoder_past_key_values, StaticCache)
 
         # When `output_attentions=True`, each iteration of generate appends the attentions corresponding to the new
         # token(s)
@@ -429,9 +428,9 @@ class CanaryModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMix
                 # hybrid caches have layers with no fixed max, so pick the first layer reporting a real length
                 query_length = next(
                     (
-                        decoder_cache.get_max_length(i)
-                        for i in range(len(decoder_cache))
-                        if decoder_cache.get_max_length(i) != -1
+                        decoder_past_key_values.get_max_length(i)
+                        for i in range(len(decoder_past_key_values))
+                        if decoder_past_key_values.get_max_length(i) != -1
                     ),
                     prompt_length + generated_length,
                 )
@@ -523,7 +522,7 @@ class CanaryIntegrationTest(unittest.TestCase):
         """
         reproducer: https://gist.github.com/harshaljanjani/ff11260652a115da61037ecfc288c74f#file-reproducer_transcription-py
         """
-        with open(self.fixtures_path / "expected_results_transcription.json", encoding="utf-8") as f:
+        with open(self.fixtures_path / "expected_results_transcription.json") as f:
             expected_transcriptions = json.load(f)["transcriptions"]
 
         inputs = self._load_datasamples(self.processor, 1)
@@ -536,7 +535,7 @@ class CanaryIntegrationTest(unittest.TestCase):
         """
         reproducer: https://gist.github.com/harshaljanjani/d93abd784d09a7f25291080ebcdf805d#file-reproducer_batch-py
         """
-        with open(self.fixtures_path / "expected_results_batch.json", encoding="utf-8") as f:
+        with open(self.fixtures_path / "expected_results_batch.json") as f:
             expected_transcriptions = json.load(f)["transcriptions"]
 
         inputs = self._load_datasamples(self.processor, 2)
@@ -551,7 +550,7 @@ class CanaryIntegrationTest(unittest.TestCase):
         """
         reproducer: https://gist.github.com/harshaljanjani/5b093d7fc25507694b7b6ada08fa7988#file-reproducer_translation-py
         """
-        with open(self.fixtures_path / "expected_results_translation.json", encoding="utf-8") as f:
+        with open(self.fixtures_path / "expected_results_translation.json") as f:
             expected_transcriptions = json.load(f)["transcriptions"]
 
         inputs = self._load_datasamples(self.processor, 1)

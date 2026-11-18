@@ -222,7 +222,7 @@ class LongT5ModelTester:
         )
         result = model(input_ids=input_ids, decoder_input_ids=decoder_input_ids)
         decoder_output = result.last_hidden_state
-        decoder_past = result.cache
+        decoder_past = result.past_key_values
         encoder_output = result.encoder_last_hidden_state
 
         self.parent.assertEqual(encoder_output.size(), (self.batch_size, self.encoder_seq_length, self.hidden_size))
@@ -268,7 +268,7 @@ class LongT5ModelTester:
         self.parent.assertTrue(len(outputs) == len(outputs_use_cache_conf))
         self.parent.assertTrue(len(outputs) == len(outputs_no_past) + 1)
 
-        output, cache = outputs.to_tuple()
+        output, past_key_values = outputs.to_tuple()
 
         # create hypothetical next token and extent to next_input_ids
         next_tokens = ids_tensor((self.batch_size, 1), config.vocab_size)
@@ -277,7 +277,7 @@ class LongT5ModelTester:
         next_input_ids = torch.cat([input_ids, next_tokens], dim=-1)
 
         output_from_no_past = model(next_input_ids)["last_hidden_state"]
-        output_from_past = model(next_tokens, cache=cache)["last_hidden_state"]
+        output_from_past = model(next_tokens, past_key_values=past_key_values)["last_hidden_state"]
 
         # select random slice
         random_slice_idx = ids_tensor((1,), output_from_past.shape[-1]).item()
@@ -307,7 +307,7 @@ class LongT5ModelTester:
         attn_mask[:, half_seq_length:] = 0
 
         # first forward pass
-        output, cache = model(input_ids, attention_mask=attn_mask, use_cache=True).to_tuple()
+        output, past_key_values = model(input_ids, attention_mask=attn_mask, use_cache=True).to_tuple()
 
         # create hypothetical next token and extent to next_input_ids
         next_tokens = ids_tensor((self.batch_size, 1), config.vocab_size)
@@ -326,7 +326,9 @@ class LongT5ModelTester:
 
         # get two different outputs
         output_from_no_past = model(next_input_ids, attention_mask=attn_mask)["last_hidden_state"]
-        output_from_past = model(next_tokens, cache=cache, attention_mask=attn_mask)["last_hidden_state"]
+        output_from_past = model(next_tokens, past_key_values=past_key_values, attention_mask=attn_mask)[
+            "last_hidden_state"
+        ]
 
         # select random slice
         random_slice_idx = ids_tensor((1,), output_from_past.shape[-1]).item()
@@ -349,7 +351,7 @@ class LongT5ModelTester:
         # first forward pass
         outputs = model(input_ids, attention_mask=attention_mask, use_cache=True)
 
-        output, cache = outputs.to_tuple()
+        output, past_key_values = outputs.to_tuple()
 
         # create hypothetical multiple next token and extent to next_input_ids
         next_tokens = ids_tensor((self.batch_size, 3), config.vocab_size)
@@ -360,7 +362,9 @@ class LongT5ModelTester:
         next_attention_mask = torch.cat([attention_mask, next_mask], dim=-1)
 
         output_from_no_past = model(next_input_ids, attention_mask=next_attention_mask)["last_hidden_state"]
-        output_from_past = model(next_tokens, attention_mask=next_attention_mask, cache=cache)["last_hidden_state"]
+        output_from_past = model(next_tokens, attention_mask=next_attention_mask, past_key_values=past_key_values)[
+            "last_hidden_state"
+        ]
 
         # select random slice
         random_slice_idx = ids_tensor((1,), output_from_past.shape[-1]).item()
@@ -372,7 +376,7 @@ class LongT5ModelTester:
         # test that outputs are equal for slice
         self.parent.assertTrue(torch.allclose(output_from_past_slice, output_from_no_past_slice, atol=1e-3))
 
-    def create_and_check_generate_with_cache(
+    def create_and_check_generate_with_past_key_values(
         self,
         config,
         input_ids,
@@ -544,9 +548,9 @@ class LongT5ModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMix
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
         self.model_tester.create_and_check_decoder_model_past_large_inputs(*config_and_inputs)
 
-    def test_generate_with_cache(self):
+    def test_generate_with_past_key_values(self):
         config_and_inputs = self.model_tester.prepare_config_and_inputs()
-        self.model_tester.create_and_check_generate_with_cache(*config_and_inputs)
+        self.model_tester.create_and_check_generate_with_past_key_values(*config_and_inputs)
 
     @slow
     def test_model_from_pretrained(self):
@@ -611,8 +615,8 @@ class LongT5ModelTest(ModelTesterMixin, GenerationTesterMixin, PipelineTesterMix
                     # Question Answering model returns start_logits and end_logits
                     if model_class in get_values(MODEL_FOR_QUESTION_ANSWERING_MAPPING):
                         correct_outlen += 1  # start_logits and end_logits instead of only 1 output
-                    if "cache" in outputs:
-                        correct_outlen += 1  # cache have been returned
+                    if "past_key_values" in outputs:
+                        correct_outlen += 1  # past_key_values have been returned
 
                     self.assertEqual(out_len, correct_outlen)
 
@@ -750,8 +754,8 @@ class LongT5TGlobalModelTest(LongT5ModelTest):
                     # Question Answering model returns start_logits and end_logits
                     if model_class in get_values(MODEL_FOR_QUESTION_ANSWERING_MAPPING):
                         correct_outlen += 1  # start_logits and end_logits instead of only 1 output
-                    if "cache" in outputs:
-                        correct_outlen += 1  # cache have been returned
+                    if "past_key_values" in outputs:
+                        correct_outlen += 1  # past_key_values have been returned
 
                     self.assertEqual(out_len, correct_outlen)
 

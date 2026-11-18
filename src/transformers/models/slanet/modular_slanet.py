@@ -22,8 +22,8 @@ import torch.nn.functional as F
 from huggingface_hub.dataclasses import strict
 
 from ... import initialization as init
-from ...backbone_utils import load_backbone
-from ...configuration_utils import PreTrainedConfig, SubConfigSpec
+from ...backbone_utils import consolidate_backbone_kwargs_to_config, load_backbone
+from ...configuration_utils import PreTrainedConfig
 from ...modeling_outputs import BaseModelOutputWithNoAttention
 from ...modeling_utils import PreTrainedModel
 from ...processing_utils import Unpack
@@ -60,18 +60,7 @@ class SLANetConfig(SLANeXtConfig):
         Number of blocks within the Cross Stage Partial (CSP) layer.
     """
 
-    sub_configs_defaults = {
-        "backbone_config": SubConfigSpec(
-            config_class=AutoConfig,
-            model_type="pp_lcnet",
-            init_kwargs={
-                "scale": 1,
-                "out_features": ["stage2", "stage3", "stage4", "stage5"],
-                "out_indices": [2, 3, 4, 5],
-                "divisor": 16,
-            },
-        ),
-    }
+    sub_configs = {"backbone_config": AutoConfig}
 
     vision_config = AttributeError()
     backbone_config: dict | PreTrainedConfig | None = None
@@ -84,10 +73,25 @@ class SLANetConfig(SLANeXtConfig):
     csp_kernel_size: int = 5
     csp_num_blocks: int = 1
 
+    def __post_init__(self, **kwargs):
+        self.backbone_config, kwargs = consolidate_backbone_kwargs_to_config(
+            backbone_config=self.backbone_config,
+            default_config_type="pp_lcnet",
+            default_config_kwargs={
+                "scale": 1,
+                "out_features": ["stage2", "stage3", "stage4", "stage5"],
+                "out_indices": [2, 3, 4, 5],
+                "divisor": 16,
+            },
+            **kwargs,
+        )
+        PreTrainedConfig.__post_init__(**kwargs)
+
 
 class SLANetPreTrainedModel(SLANeXtPreTrainedModel):
     _keep_in_fp32_modules_strict = []
 
+    @torch.no_grad()
     def _init_weights(self, module):
         """Initialize the weights"""
         PreTrainedModel._init_weights(module)
@@ -118,14 +122,14 @@ class SLANetPreTrainedModel(SLANeXtPreTrainedModel):
 @dataclass
 class SLANetForTableRecognitionOutput(BaseModelOutputWithNoAttention):
     r"""
-    head_hidden_states (`tuple(torch.Tensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):
+    head_hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):
         Hidden-states of the SLANetSLAHead at each prediction step, varies up to max `self.config.max_text_length` states (depending on early exits).
-    head_attentions (`tuple(torch.Tensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):
+    head_attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):
         Attentions of the SLANetSLAHead at each prediction step, varies up to max `self.config.max_text_length` attentions (depending on early exits).
     """
 
-    head_hidden_states: torch.Tensor | None = None
-    head_attentions: torch.Tensor | None = None
+    head_hidden_states: torch.FloatTensor | None = None
+    head_attentions: torch.FloatTensor | None = None
 
 
 class SLANetSLAHead(SLANeXtSLAHead):
@@ -176,7 +180,7 @@ class SLANetBottleneck(nn.Module):
             config=config,
         )
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: torch.FloatTensor) -> torch.FloatTensor:
         hidden_states = self.conv1(hidden_states)
         hidden_states = self.conv2(hidden_states)
 
@@ -210,7 +214,7 @@ class SLANetCSPLayer(nn.Module):
             ]
         )
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: torch.FloatTensor) -> torch.FloatTensor:
         residual = self.conv1(hidden_states)
 
         hidden_states = self.conv2(hidden_states)
@@ -291,7 +295,7 @@ class SLANetCSPPAN(nn.Module):
             ]
         )
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def forward(self, hidden_states: torch.FloatTensor) -> torch.FloatTensor:
         projected_features = []
         for idx in range(len(self.channel_projector)):
             projected_features.append(self.channel_projector[idx](hidden_states[idx]))
@@ -330,8 +334,8 @@ class SLANetBackbone(SLANetPreTrainedModel):
     @can_return_tuple
     @auto_docstring
     def forward(
-        self, hidden_states: torch.Tensor, **kwargs: Unpack[TransformersKwargs]
-    ) -> tuple[torch.Tensor] | BaseModelOutputWithNoAttention:
+        self, hidden_states: torch.FloatTensor, **kwargs: Unpack[TransformersKwargs]
+    ) -> tuple[torch.FloatTensor] | BaseModelOutputWithNoAttention:
         outputs = self.vision_backbone(hidden_states, **kwargs)
         hidden_states = self.post_csp_pan(outputs.feature_maps)
         return BaseModelOutputWithNoAttention(
@@ -352,8 +356,8 @@ class SLANetForTableRecognition(SLANeXtForTableRecognition):
     @can_return_tuple
     @auto_docstring
     def forward(
-        self, pixel_values: torch.Tensor, **kwargs: Unpack[TransformersKwargs]
-    ) -> tuple[torch.Tensor] | SLANetForTableRecognitionOutput:
+        self, pixel_values: torch.FloatTensor, **kwargs: Unpack[TransformersKwargs]
+    ) -> tuple[torch.FloatTensor] | SLANetForTableRecognitionOutput:
         outputs = self.backbone(pixel_values, **kwargs)
         head_outputs = self.head(outputs.last_hidden_state, **kwargs)
         # Key difference: no attentions in its vision model

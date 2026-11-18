@@ -52,11 +52,9 @@ logger = logging.get_logger(__name__)
 
 class Emu3ImageProcessorKwargs(ImagesKwargs, total=False):
     """
-    ratio (`str`, *optional*):
-        Deprecated, use [`Emu3ProcessorKwargs.ratio`] instead.
+    ratio (`str`, *optional*, defaults to `"1:1"`):
         The ratio of the image to resize the image.
-    image_area (`int`, *optional*):
-        Deprecated, use [`Emu3ProcessorKwargs.image_area`] instead.
+    image_area (`int`, *optional*, defaults to `518400`):
         The area of the image to resize the image.
     """
 
@@ -210,7 +208,7 @@ class Emu3ImageProcessor(BaseImageProcessor):
         images = make_flat_list_of_images(images)
 
         if do_convert_rgb:
-            images = [convert_to_rgb(image, return_numpy=True) for image in images]
+            images = [convert_to_rgb(image) for image in images]
 
         # All transformations expect numpy arrays.
         images = [to_numpy_array(image) for image in images]
@@ -408,9 +406,9 @@ class Emu3ImageProcessor(BaseImageProcessor):
                 )
                 pixel_values.extend(image)
 
-        image_sizes = [get_image_size(image, data_format) for image in pixel_values]
+        image_sizes = [get_image_size(image, input_data_format) for image in pixel_values]
         if do_pad:
-            pixel_values = self._pad_for_batching(pixel_values, image_sizes, input_data_format=data_format)
+            pixel_values = self._pad_for_batching(pixel_values, image_sizes)
             pixel_values = np.array(pixel_values)
 
         return BatchFeature(

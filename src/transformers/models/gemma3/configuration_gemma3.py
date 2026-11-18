@@ -22,9 +22,12 @@ from typing import Any
 
 from huggingface_hub.dataclasses import strict
 
-from ...configuration_utils import PreTrainedConfig, SubConfigSpec
-from ...utils import auto_docstring
-from ..auto import AutoConfig
+from ...configuration_utils import PreTrainedConfig
+from ...utils import auto_docstring, logging
+from ..siglip import SiglipVisionConfig
+
+
+logger = logging.get_logger(__name__)
 
 
 @auto_docstring(checkpoint="google/gemma-3-4b-it")
@@ -53,7 +56,7 @@ class Gemma3TextConfig(PreTrainedConfig):
     """
 
     model_type = "gemma3_text"
-    keys_to_ignore_at_inference = ["cache"]
+    keys_to_ignore_at_inference = ["past_key_values"]
     base_model_tp_plan = {
         "layers.*.self_attn.q_proj": "colwise",
         "layers.*.self_attn.k_proj": "colwise",
@@ -198,19 +201,34 @@ class Gemma3Config(PreTrainedConfig):
         "boi_token_id": "boi_token_index",
         "eoi_token_id": "eoi_token_index",
     }
-    sub_configs_defaults = {
+    sub_configs = {
         "text_config": Gemma3TextConfig,
-        "vision_config": SubConfigSpec(config_class=AutoConfig, model_type="siglip_vision_model"),
+        "vision_config": SiglipVisionConfig,
     }
 
-    text_config: PreTrainedConfig | dict[str, Any] | None = None
-    vision_config: PreTrainedConfig | dict[str, Any] | None = None
+    text_config: Gemma3TextConfig | dict[str, Any] | None = None
+    vision_config: SiglipVisionConfig | dict[str, Any] | None = None
     mm_tokens_per_image: int | None = 256
     boi_token_index: int | None = 255_999
     eoi_token_index: int | None = 256_000
     image_token_index: int | None = 262_144
     initializer_range: float | None = 0.02
     tie_word_embeddings: bool | None = True
+
+    def __post_init__(self, **kwargs):
+        if self.text_config is None:
+            self.text_config = Gemma3TextConfig()
+            logger.info("text_config is None, using default Gemma3TextConfig text config.")
+        elif isinstance(self.text_config, dict):
+            self.text_config = Gemma3TextConfig(**self.text_config)
+
+        if isinstance(self.vision_config, dict):
+            self.vision_config = SiglipVisionConfig(**self.vision_config)
+        elif self.vision_config is None:
+            self.vision_config = SiglipVisionConfig()
+            logger.info("vision_config is None, using default SiglipVisionConfig vision config.")
+
+        super().__post_init__(**kwargs)
 
 
 __all__ = ["Gemma3Config", "Gemma3TextConfig"]

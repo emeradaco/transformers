@@ -21,14 +21,23 @@ from ...audio_utils import AudioInput
 from ...processing_utils import ProcessingKwargs, ProcessorMixin, Unpack
 from ...tokenization_utils_base import PreTokenizedInput, TextInput
 from ...utils import auto_docstring
-from ...utils.deprecation import deprecate_attr
+
+
+class Qwen2AudioProcessorKwargs(ProcessingKwargs, total=False):
+    _defaults = {
+        "text_kwargs": {
+            "padding": False,
+        },
+        "audio_kwargs": {
+            "return_attention_mask": True,
+            "padding": "max_length",
+        },
+    }
 
 
 @auto_docstring
 class Qwen2AudioProcessor(ProcessorMixin):
-    audio_kwargs = {
-        "return_attention_mask": True,
-    }
+    valid_processor_kwargs = Qwen2AudioProcessorKwargs
 
     def __init__(
         self,
@@ -164,7 +173,5 @@ class Qwen2AudioProcessor(ProcessorMixin):
         )
         # fmt: on
 
-
-__getattr__ = deprecate_attr(__name__, rename={"Qwen2AudioProcessorKwargs": (ProcessingKwargs, "5.29.0")})
 
 __all__ = ["Qwen2AudioProcessor"]

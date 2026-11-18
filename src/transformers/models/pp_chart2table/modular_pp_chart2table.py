@@ -88,7 +88,6 @@ class PPChart2TableProcessor(ProcessorMixin):
 
 __all__ = [
     "PPChart2TableConfig",
-    "PPChart2TableVisionConfig",  # noqa
     "PPChart2TableImageProcessor",
     "PPChart2TableImageProcessorPil",
     "PPChart2TableProcessor",

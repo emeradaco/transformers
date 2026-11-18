@@ -55,7 +55,6 @@ class SegformerConfig(PreTrainedConfig):
     ```"""
 
     model_type = "segformer"
-    attribute_map = {"num_hidden_layers": "num_encoder_blocks"}
 
     num_channels: int = 3
     num_encoder_blocks: int = 4

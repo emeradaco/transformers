@@ -198,6 +198,7 @@ generation_output[:2]
     - update
     - get_seq_length
     - get_mask_sizes
+    - get_max_cache_shape
     - reset
     - reorder_cache
 
@@ -223,6 +224,7 @@ generation_output[:2]
     - update
     - get_seq_length
     - get_mask_sizes
+    - get_max_cache_shape
     - reset
     - reorder_cache
     - crop

@@ -32,14 +32,12 @@ from ...modeling_outputs import (
     QuestionAnsweringModelOutput,
     SequenceClassifierOutputWithPast,
 )
-from ...modeling_utils import PreTrainedModel, slice_logits_to_keep
+from ...modeling_utils import PreTrainedModel
 from ...utils import auto_docstring, logging
-from ...utils.deprecation import deprecate_kwarg
-from ...utils.generic import is_flash_attention_requested
 from .configuration_gptj import GPTJConfig
 
 
-if is_flash_attn_available(kernels_fallback_ok=True):
+if is_flash_attn_available():
     from ...modeling_flash_attention_utils import _flash_attention_forward
 
 
@@ -48,7 +46,7 @@ logger = logging.get_logger(__name__)
 
 def create_sinusoidal_positions(num_pos: int, dim: int) -> torch.Tensor:
     inv_freq = 1.0 / (10000 ** (torch.arange(0, dim, 2, dtype=torch.int64) / dim))
-    sinusoid_inp = torch.arange(num_pos, dtype=torch.int64).float()[:, None] * inv_freq
+    sinusoid_inp = torch.einsum("i , j -> i j", torch.arange(num_pos, dtype=torch.int64).float(), inv_freq).float()
     return torch.cat((torch.sin(sinusoid_inp), torch.cos(sinusoid_inp)), dim=1)
 
 
@@ -169,9 +167,9 @@ class GPTJAttention(nn.Module):
 
     def forward(
         self,
-        hidden_states: torch.Tensor,
+        hidden_states: torch.FloatTensor,
         layer_past: Cache | None = None,
-        attention_mask: torch.Tensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         position_ids: torch.LongTensor | None = None,
         use_cache: bool | None = False,
         output_attentions: bool | None = False,
@@ -244,9 +242,9 @@ class GPTJFlashAttention2(GPTJAttention):
 
     def forward(
         self,
-        hidden_states: torch.Tensor,
+        hidden_states: torch.FloatTensor,
         layer_past: Cache | None = None,
-        attention_mask: torch.Tensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         position_ids: torch.LongTensor | None = None,
         use_cache: bool | None = False,
         output_attentions: bool | None = False,
@@ -311,7 +309,7 @@ class GPTJFlashAttention2(GPTJAttention):
         # in fp32. (LlamaRMSNorm handles it correctly)
 
         input_dtype = query.dtype
-        device_type = query.device.type
+        device_type = query.device.type if query.device.type != "mps" else "cpu"
         if input_dtype == torch.float32:
             if torch.is_autocast_enabled(device_type):
                 target_dtype = torch.get_autocast_dtype(device_type)
@@ -373,7 +371,7 @@ class GPTJMLP(nn.Module):
         self.act = ACT2FN[config.activation_function]
         self.dropout = nn.Dropout(config.resid_pdrop)
 
-    def forward(self, hidden_states: torch.Tensor | None) -> torch.Tensor:
+    def forward(self, hidden_states: torch.FloatTensor | None) -> torch.FloatTensor:
         hidden_states = self.fc_in(hidden_states)
         hidden_states = self.act(hidden_states)
         hidden_states = self.fc_out(hidden_states)
@@ -386,22 +384,19 @@ class GPTJBlock(GradientCheckpointingLayer):
         super().__init__()
         inner_dim = config.n_inner if config.n_inner is not None else 4 * config.n_embd
         self.ln_1 = nn.LayerNorm(config.n_embd, eps=config.layer_norm_epsilon)
-        attn_implementation = (
-            "flash_attention_2" if is_flash_attention_requested(config) else config._attn_implementation
-        )
-        self.attn = GPTJ_ATTENTION_CLASSES[attn_implementation](config, layer_idx)
+        self.attn = GPTJ_ATTENTION_CLASSES[config._attn_implementation](config, layer_idx)
         self.mlp = GPTJMLP(inner_dim, config)
 
     def forward(
         self,
-        hidden_states: torch.Tensor | None,
+        hidden_states: torch.FloatTensor | None,
         layer_past: Cache | None = None,
-        attention_mask: torch.Tensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         position_ids: torch.LongTensor | None = None,
         use_cache: bool | None = False,
         output_attentions: bool | None = False,
         **kwargs,
-    ) -> tuple[torch.Tensor] | tuple[torch.Tensor, tuple[torch.Tensor, ...]] | None:
+    ) -> tuple[torch.Tensor] | tuple[torch.Tensor, tuple[torch.FloatTensor, ...]] | None:
         residual = hidden_states
         hidden_states = self.ln_1(hidden_states)
         attn_outputs, attn_weights = self.attn(
@@ -424,7 +419,7 @@ class GPTJPreTrainedModel(PreTrainedModel):
     base_model_prefix = "transformer"
     supports_gradient_checkpointing = True
     _no_split_modules = ["GPTJBlock"]
-    _skip_keys_device_placement = ["cache"]
+    _skip_keys_device_placement = ["past_key_values"]
     _supports_flash_attn = True
     _can_compile_fullgraph = True
 
@@ -436,7 +431,7 @@ class GPTJPreTrainedModel(PreTrainedModel):
 
 @auto_docstring
 class GPTJModel(GPTJPreTrainedModel):
-    def __init__(self, config: GPTJConfig):
+    def __init__(self, config):
         super().__init__(config)
 
         self.embed_dim = config.n_embd
@@ -458,15 +453,14 @@ class GPTJModel(GPTJPreTrainedModel):
         self.wte = new_embeddings
 
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
-        attention_mask: torch.Tensor | None = None,
+        past_key_values: Cache | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         token_type_ids: torch.LongTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         use_cache: bool | None = None,
         output_attentions: bool | None = None,
         output_hidden_states: bool | None = None,
@@ -474,7 +468,7 @@ class GPTJModel(GPTJPreTrainedModel):
         **kwargs,
     ) -> tuple | BaseModelOutputWithPast:
         r"""
-        inputs_embeds (`torch.Tensor` of shape `(batch_size, sequence_length, hidden_dim)`, *optional*):
+        inputs_embeds (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_dim)`, *optional*):
             Optionally, instead of passing `input_ids` you can choose to directly pass an embedded representation. This
             is useful if you want more control over how to convert *input_ids* indices into associated vectors than the
             model's internal embedding lookup matrix.
@@ -499,20 +493,20 @@ class GPTJModel(GPTJPreTrainedModel):
         if inputs_embeds is None:
             inputs_embeds = self.wte(input_ids)
 
-        if use_cache and cache is None:
-            cache = DynamicCache(config=self.config)
+        if use_cache and past_key_values is None:
+            past_key_values = DynamicCache(config=self.config)
 
         seq_length = inputs_embeds.shape[1]
         if position_ids is None:
-            cache_length = cache.get_seq_length() if cache is not None else 0
-            position_ids = torch.arange(seq_length, device=inputs_embeds.device) + cache_length
+            past_key_values_length = past_key_values.get_seq_length() if past_key_values is not None else 0
+            position_ids = torch.arange(seq_length, device=inputs_embeds.device) + past_key_values_length
             position_ids = position_ids.unsqueeze(0)
 
         causal_mask = create_causal_mask(
             config=self.config,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
-            cache=cache,
+            past_key_values=past_key_values,
             position_ids=position_ids,
         )
 
@@ -534,7 +528,7 @@ class GPTJModel(GPTJPreTrainedModel):
 
             outputs = block(
                 hidden_states,
-                layer_past=cache,
+                layer_past=past_key_values,
                 attention_mask=causal_mask,
                 position_ids=position_ids,
                 use_cache=use_cache,
@@ -553,11 +547,13 @@ class GPTJModel(GPTJPreTrainedModel):
             all_hidden_states = all_hidden_states + (hidden_states,)
 
         if not return_dict:
-            return tuple(v for v in [hidden_states, cache, all_hidden_states, all_self_attentions] if v is not None)
+            return tuple(
+                v for v in [hidden_states, past_key_values, all_hidden_states, all_self_attentions] if v is not None
+            )
 
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
-            cache=cache,
+            past_key_values=past_key_values,
             hidden_states=all_hidden_states,
             attentions=all_self_attentions,
         )
@@ -571,7 +567,7 @@ class GPTJModel(GPTJPreTrainedModel):
 class GPTJForCausalLM(GPTJPreTrainedModel, GenerationMixin):
     _tied_weights_keys = {"lm_head.weight": "transformer.wte.weight"}
 
-    def __init__(self, config: GPTJConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.transformer = GPTJModel(config)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size)
@@ -580,15 +576,14 @@ class GPTJForCausalLM(GPTJPreTrainedModel, GenerationMixin):
         self.post_init()
 
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
-        attention_mask: torch.Tensor | None = None,
+        past_key_values: Cache | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         token_type_ids: torch.LongTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
         output_attentions: bool | None = None,
@@ -598,7 +593,7 @@ class GPTJForCausalLM(GPTJPreTrainedModel, GenerationMixin):
         **kwargs,
     ) -> tuple | CausalLMOutputWithPast:
         r"""
-        inputs_embeds (`torch.Tensor` of shape `(batch_size, sequence_length, hidden_dim)`, *optional*):
+        inputs_embeds (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_dim)`, *optional*):
             Optionally, instead of passing `input_ids` you can choose to directly pass an embedded representation. This
             is useful if you want more control over how to convert *input_ids* indices into associated vectors than the
             model's internal embedding lookup matrix.
@@ -611,7 +606,7 @@ class GPTJForCausalLM(GPTJPreTrainedModel, GenerationMixin):
 
         transformer_outputs = self.transformer(
             input_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
             position_ids=position_ids,
@@ -623,8 +618,9 @@ class GPTJForCausalLM(GPTJPreTrainedModel, GenerationMixin):
         )
 
         hidden_states = transformer_outputs[0]
-        hidden_states = slice_logits_to_keep(hidden_states, logits_to_keep)
-        logits = self.lm_head(hidden_states)
+        # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
+        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+        logits = self.lm_head(hidden_states[:, slice_indices, :])
 
         loss = None
         if labels is not None:
@@ -637,7 +633,7 @@ class GPTJForCausalLM(GPTJPreTrainedModel, GenerationMixin):
         return CausalLMOutputWithPast(
             loss=loss,
             logits=logits,
-            cache=transformer_outputs.cache,
+            past_key_values=transformer_outputs.past_key_values,
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
         )
@@ -658,7 +654,7 @@ class GPTJForCausalLM(GPTJPreTrainedModel, GenerationMixin):
     """
 )
 class GPTJForSequenceClassification(GPTJPreTrainedModel):
-    def __init__(self, config: GPTJConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.transformer = GPTJModel(config)
@@ -668,15 +664,14 @@ class GPTJForSequenceClassification(GPTJPreTrainedModel):
         self.post_init()
 
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
-        attention_mask: torch.Tensor | None = None,
+        past_key_values: Cache | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         token_type_ids: torch.LongTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
         output_attentions: bool | None = None,
@@ -685,16 +680,20 @@ class GPTJForSequenceClassification(GPTJPreTrainedModel):
         **kwargs,
     ) -> tuple | SequenceClassifierOutputWithPast:
         r"""
-        inputs_embeds (`torch.Tensor` of shape `(batch_size, sequence_length, hidden_dim)`, *optional*):
+        inputs_embeds (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_dim)`, *optional*):
             Optionally, instead of passing `input_ids` you can choose to directly pass an embedded representation. This
             is useful if you want more control over how to convert *input_ids* indices into associated vectors than the
             model's internal embedding lookup matrix.
+        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
+            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
+            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
         """
         return_dict = return_dict if return_dict is not None else self.config.return_dict
 
         transformer_outputs = self.transformer(
             input_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
             position_ids=position_ids,
@@ -760,7 +759,7 @@ class GPTJForSequenceClassification(GPTJPreTrainedModel):
         return SequenceClassifierOutputWithPast(
             loss=loss,
             logits=pooled_logits,
-            cache=transformer_outputs.cache,
+            past_key_values=transformer_outputs.past_key_values,
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
         )
@@ -768,7 +767,7 @@ class GPTJForSequenceClassification(GPTJPreTrainedModel):
 
 @auto_docstring
 class GPTJForQuestionAnswering(GPTJPreTrainedModel):
-    def __init__(self, config: GPTJConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.transformer = GPTJModel(config)
@@ -781,10 +780,10 @@ class GPTJForQuestionAnswering(GPTJPreTrainedModel):
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        attention_mask: torch.Tensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         token_type_ids: torch.LongTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         start_positions: torch.LongTensor | None = None,
         end_positions: torch.LongTensor | None = None,
         output_attentions: bool | None = None,
@@ -793,7 +792,7 @@ class GPTJForQuestionAnswering(GPTJPreTrainedModel):
         **kwargs,
     ) -> tuple | QuestionAnsweringModelOutput:
         r"""
-        inputs_embeds (`torch.Tensor` of shape `(batch_size, sequence_length, hidden_dim)`, *optional*):
+        inputs_embeds (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_dim)`, *optional*):
             Optionally, instead of passing `input_ids` you can choose to directly pass an embedded representation. This
             is useful if you want more control over how to convert *input_ids* indices into associated vectors than the
             model's internal embedding lookup matrix.

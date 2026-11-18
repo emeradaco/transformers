@@ -22,10 +22,9 @@ from ...cache_utils import Cache, DynamicCache
 from ...generation import GenerationMixin
 from ...masking_utils import create_causal_mask
 from ...modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
-from ...modeling_utils import PreTrainedModel, slice_logits_to_keep
+from ...modeling_utils import PreTrainedModel
 from ...processing_utils import Unpack
 from ...utils import ModelOutput, auto_docstring, can_return_tuple, logging
-from ...utils.deprecation import deprecate_kwarg
 from ...utils.generic import merge_with_config_defaults
 from ...utils.import_utils import is_torchdynamo_compiling
 from ...utils.output_capturing import capture_outputs
@@ -55,44 +54,44 @@ logger = logging.get_logger(__name__)
 @dataclass
 class CsmOutputWithPast(ModelOutput):
     r"""
-    loss (`torch.Tensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
+    loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
         Language modeling loss (for next-token prediction).
-    logits (`torch.Tensor` of shape `(batch_size, sequence_length, config.vocab_size)`):
+    logits (`torch.FloatTensor` of shape `(batch_size, sequence_length, config.vocab_size)`):
         Prediction scores of the language modeling head (scores for each vocabulary token before SoftMax).
-    cache (`Cache`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
+    past_key_values (`Cache`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
         It is a [`~cache_utils.Cache`] instance. For more details, see our [kv cache guide](https://huggingface.co/docs/transformers/en/kv_cache).
 
         Contains pre-computed hidden-states (key and values in the self-attention blocks) that can be used (see
-        `cache` input) to speed up sequential decoding.
-    depth_decoder_loss (`torch.Tensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
+        `past_key_values` input) to speed up sequential decoding.
+    depth_decoder_loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
         Language modeling loss (for next-token prediction) of the depth decoder model.
-    depth_decoder_logits (`torch.Tensor` of shape `(batch_size, sequence_length, config.vocab_size)`):
+    depth_decoder_logits (`torch.FloatTensor` of shape `(batch_size, sequence_length, config.vocab_size)`):
         Prediction scores of the depth decoder (scores for each vocabulary token before SoftMax).
-    depth_decoder_cache (`Cache`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
+    depth_decoder_past_key_values (`Cache`, *optional*, returned when `use_cache=True` is passed or when `config.use_cache=True`):
         It is a [`~cache_utils.Cache`] instance. For more details, see our [kv cache guide](https://huggingface.co/docs/transformers/en/kv_cache).
-    depth_decoder_hidden_states (`tuple(torch.Tensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):
-        Tuple of `torch.Tensor` (one for the output of the embeddings, if the model has an embedding layer, +
+    depth_decoder_hidden_states (`tuple(torch.FloatTensor)`, *optional*, returned when `output_hidden_states=True` is passed or when `config.output_hidden_states=True`):
+        Tuple of `torch.FloatTensor` (one for the output of the embeddings, if the model has an embedding layer, +
         one for the output of each layer) of shape `(batch_size, sequence_length, hidden_size)`.
 
         Hidden-states of the model at the output of each layer plus the optional initial embedding outputs.
-    depth_decoder_attentions (`tuple(torch.Tensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):
-        Tuple of `torch.Tensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,
+    depth_decoder_attentions (`tuple(torch.FloatTensor)`, *optional*, returned when `output_attentions=True` is passed or when `config.output_attentions=True`):
+        Tuple of `torch.FloatTensor` (one for each layer) of shape `(batch_size, num_heads, sequence_length,
         sequence_length)`.
-    backbone_loss (`torch.Tensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
+    backbone_loss (`torch.FloatTensor` of shape `(1,)`, *optional*, returned when `labels` is provided):
         Language modeling loss (for next-token prediction) of the backbone model.
     """
 
-    loss: torch.Tensor | None = None
-    logits: torch.Tensor | None = None
-    cache: Cache | None = None
-    hidden_states: tuple[torch.Tensor, ...] | None = None
-    attentions: tuple[torch.Tensor, ...] | None = None
-    depth_decoder_loss: torch.Tensor | None = None
-    depth_decoder_logits: torch.Tensor | None = None
-    depth_decoder_cache: Cache | None = None
-    depth_decoder_hidden_states: tuple[torch.Tensor, ...] | None = None
-    depth_decoder_attentions: tuple[torch.Tensor, ...] | None = None
-    backbone_loss: torch.Tensor | None = None
+    loss: torch.FloatTensor | None = None
+    logits: torch.FloatTensor | None = None
+    past_key_values: Cache | None = None
+    hidden_states: tuple[torch.FloatTensor, ...] | None = None
+    attentions: tuple[torch.FloatTensor, ...] | None = None
+    depth_decoder_loss: torch.FloatTensor | None = None
+    depth_decoder_logits: torch.FloatTensor | None = None
+    depth_decoder_past_key_values: Cache | None = None
+    depth_decoder_hidden_states: tuple[torch.FloatTensor, ...] | None = None
+    depth_decoder_attentions: tuple[torch.FloatTensor, ...] | None = None
+    backbone_loss: torch.FloatTensor | None = None
 
 
 # manually specify names for correct naming when converting from modular
@@ -128,7 +127,7 @@ class CsmPreTrainedModel(PreTrainedModel):
     input_modalities = ("audio", "text")
     supports_gradient_checkpointing = True
     _no_split_modules = ["CsmDecoderLayer"]
-    _skip_keys_device_placement = ["cache"]
+    _skip_keys_device_placement = ["past_key_values"]
     _supports_flash_attn = True
     _supports_sdpa = True
     # does not because of Mimi codec model
@@ -141,6 +140,7 @@ class CsmPreTrainedModel(PreTrainedModel):
         "attentions": CsmAttention,
     }
 
+    @torch.no_grad()
     def _init_weights(self, module):
         super()._init_weights(module)
         if isinstance(module, CsmCodebooksHead):
@@ -155,7 +155,7 @@ class CsmPreTrainedModel(PreTrainedModel):
 class CsmDepthDecoderModel(LlamaModel, CsmPreTrainedModel):
     config: CsmDepthDecoderConfig
 
-    def __init__(self, config: CsmDepthDecoderConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.embed_tokens = nn.Embedding((config.num_codebooks * config.vocab_size), config.backbone_hidden_size)
         self.inputs_embeds_projector = nn.Linear(config.backbone_hidden_size, config.hidden_size, bias=False)
@@ -163,20 +163,19 @@ class CsmDepthDecoderModel(LlamaModel, CsmPreTrainedModel):
     @merge_with_config_defaults
     @capture_outputs
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        backbone_last_hidden_state: torch.Tensor | None = None,
+        backbone_last_hidden_state: torch.FloatTensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         use_cache: bool | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple | BaseModelOutputWithPast:
         r"""
-        backbone_last_hidden_state (`torch.Tensor` of shape `(batch_size, backbone_hidden_size)`, *optional*):
+        backbone_last_hidden_state (`torch.FloatTensor` of shape `(batch_size, backbone_hidden_size)`, *optional*):
             The last hidden state of the backbone model. Such input is required when the first codebook token (the one generated by the backbone model)
             is provided in the `input_ids` argument.
         """
@@ -189,10 +188,10 @@ class CsmDepthDecoderModel(LlamaModel, CsmPreTrainedModel):
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds.")
 
-        if use_cache and cache is None:
-            cache = DynamicCache(config=self.config)
+        if use_cache and past_key_values is None:
+            past_key_values = DynamicCache(config=self.config)
 
-        past_seen_tokens = cache.get_seq_length() if cache is not None else 0
+        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
         inputs_seq_length = inputs_embeds.shape[1] if inputs_embeds is not None else input_ids.shape[1]
         device = inputs_embeds.device if inputs_embeds is not None else input_ids.device
         position_ids = torch.arange(past_seen_tokens, past_seen_tokens + inputs_seq_length, device=device)
@@ -217,7 +216,7 @@ class CsmDepthDecoderModel(LlamaModel, CsmPreTrainedModel):
             config=self.config,
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
-            cache=cache,
+            past_key_values=past_key_values,
             position_ids=position_ids,
         )
 
@@ -232,7 +231,7 @@ class CsmDepthDecoderModel(LlamaModel, CsmPreTrainedModel):
                 hidden_states,
                 attention_mask=causal_mask,
                 position_ids=position_ids,
-                cache=cache,
+                past_key_values=past_key_values,
                 use_cache=use_cache,
                 position_embeddings=position_embeddings,
                 **kwargs,
@@ -241,7 +240,7 @@ class CsmDepthDecoderModel(LlamaModel, CsmPreTrainedModel):
         hidden_states = self.norm(hidden_states)
         return BaseModelOutputWithPast(
             last_hidden_state=hidden_states,
-            cache=cache if use_cache else None,
+            past_key_values=past_key_values if use_cache else None,
         )
 
 
@@ -276,27 +275,25 @@ class CsmDepthDecoderForCausalLM(LlamaForCausalLM, GenerationMixin):
     _tied_weights_keys = None
     _tp_plan = None
     _pp_plan = None
-    config: CsmDepthDecoderConfig
 
-    def __init__(self, config: CsmDepthDecoderConfig):
+    def __init__(self, config):
         super().__init__(config)
         del self.lm_head
         self.codebooks_head = CsmCodebooksHead(config.hidden_size, config.num_codebooks, config.vocab_size)
         self.model = CsmDepthDecoderModel(config)
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def prepare_inputs_for_generation(
         self,
         input_ids: torch.LongTensor,
         next_sequence_length: int | None = None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         attention_mask: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         is_first_iteration: bool | None = False,
         **kwargs,
     ):
         model_inputs = super().prepare_inputs_for_generation(
-            input_ids, next_sequence_length, cache, attention_mask, inputs_embeds, **kwargs
+            input_ids, next_sequence_length, past_key_values, attention_mask, inputs_embeds, **kwargs
         )
 
         if not is_first_iteration:
@@ -309,26 +306,29 @@ class CsmDepthDecoderForCausalLM(LlamaForCausalLM, GenerationMixin):
 
     @can_return_tuple
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
-        backbone_last_hidden_state: torch.Tensor | None = None,
+        backbone_last_hidden_state: torch.FloatTensor | None = None,
         attention_mask: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
         logits_to_keep: int | torch.Tensor = 0,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple | CausalLMOutputWithPast:
         r"""
-        backbone_last_hidden_state (`torch.Tensor` of shape `(batch_size, backbone_hidden_size)`, *optional*):
+        backbone_last_hidden_state (`torch.FloatTensor` of shape `(batch_size, backbone_hidden_size)`, *optional*):
             The last hidden state of the backbone model. Such input is required when the first codebook token (the one generated by the backbone model)
             is provided in the `input_ids` argument.
+        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
+            config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
+            (masked), the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
         """
-        past_seen_tokens = cache.get_seq_length() if cache is not None else 0
+        past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
         seq_len = inputs_embeds.shape[1] if inputs_embeds is not None else input_ids.shape[1]
         device = inputs_embeds.device if inputs_embeds is not None else input_ids.device
         codebook_indices = torch.arange(seq_len, device=device) + past_seen_tokens
@@ -338,17 +338,14 @@ class CsmDepthDecoderForCausalLM(LlamaForCausalLM, GenerationMixin):
             backbone_last_hidden_state=backbone_last_hidden_state,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             **kwargs,
         )
 
         hidden_states = outputs[0]
-        # Only compute necessary logits, and do not upcast them to float if we are not computing the loss.
-        # Note: unlike other ForCausalLM/ForConditionalGeneration models, this does not support a bool-mask
-        # `logits_to_keep`, since `CsmCodebooksHead` assigns a different weight per sequence *position* shared
-        # across the whole batch, which a ragged (per-row) mask would break.
+        # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
         if isinstance(logits_to_keep, int):
             if logits_to_keep == 0:
                 # skip idx 0 logits since it's for the concatenated backbone last hidden state
@@ -371,7 +368,7 @@ class CsmDepthDecoderForCausalLM(LlamaForCausalLM, GenerationMixin):
         return CausalLMOutputWithPast(
             loss=loss,
             logits=logits,
-            cache=outputs.cache,
+            past_key_values=outputs.past_key_values,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
@@ -393,14 +390,13 @@ class CsmBackboneModelEmbeddings(nn.Module):
 
 @auto_docstring
 class CsmBackboneModel(LlamaModel):
-    def __init__(self, config: CsmConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.embed_tokens = CsmBackboneModelEmbeddings(config)
 
     @merge_with_config_defaults
     @capture_outputs
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(self, **super_kwargs):
         r"""
         input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length, num_codebooks) or (batch_size, sequence_length)`):
@@ -427,7 +423,7 @@ class CsmForConditionalGeneration(CsmPreTrainedModel, CsmGenerationMixin):
         "backbone_model.embed_tokens.embed_audio_tokens.weight": "depth_decoder.model.embed_tokens.weight"
     }
 
-    def __init__(self, config: CsmConfig):
+    def __init__(self, config):
         super().__init__(config)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
@@ -562,20 +558,19 @@ class CsmForConditionalGeneration(CsmPreTrainedModel, CsmGenerationMixin):
 
         return {"inputs_embeds": inputs_embeds, "labels": labels}
 
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def prepare_inputs_for_generation(
         self,
         input_ids: torch.LongTensor,
         next_sequence_length: int | None = None,
-        cache: Cache | None = None,
+        past_key_values: Cache | None = None,
         attention_mask: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         **kwargs,
     ):
         model_inputs = super().prepare_inputs_for_generation(
             input_ids=input_ids,
             next_sequence_length=next_sequence_length,
-            cache=cache,
+            past_key_values=past_key_values,
             attention_mask=attention_mask,
             inputs_embeds=inputs_embeds,
             **kwargs,
@@ -596,7 +591,6 @@ class CsmForConditionalGeneration(CsmPreTrainedModel, CsmGenerationMixin):
 
     @can_return_tuple
     @auto_docstring
-    @deprecate_kwarg("past_key_values", "5.40.0", new_name="cache")
     def forward(
         self,
         input_ids: torch.LongTensor | None = None,
@@ -604,8 +598,8 @@ class CsmForConditionalGeneration(CsmPreTrainedModel, CsmGenerationMixin):
         attention_mask: torch.Tensor | None = None,
         input_values_cutoffs: torch.Tensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        cache: Cache | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        past_key_values: Cache | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         use_cache: bool | None = None,
         logits_to_keep: int | torch.Tensor = 0,
@@ -689,7 +683,7 @@ class CsmForConditionalGeneration(CsmPreTrainedModel, CsmGenerationMixin):
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
-            cache=cache,
+            past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             **kwargs,
@@ -697,8 +691,8 @@ class CsmForConditionalGeneration(CsmPreTrainedModel, CsmGenerationMixin):
 
         backbone_hidden_states = backbone_outputs[0]
         # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
-        backbone_hidden_states = slice_logits_to_keep(backbone_hidden_states, logits_to_keep)
-        backbone_logits = self.lm_head(backbone_hidden_states)
+        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+        backbone_logits = self.lm_head(backbone_hidden_states[:, slice_indices, :])
 
         loss = None
         backbone_loss = None
@@ -739,11 +733,13 @@ class CsmForConditionalGeneration(CsmPreTrainedModel, CsmGenerationMixin):
             backbone_loss=backbone_loss,
             depth_decoder_loss=depth_decoder_loss,
             logits=backbone_logits,
-            cache=backbone_outputs.cache,
+            past_key_values=backbone_outputs.past_key_values,
             hidden_states=backbone_outputs.hidden_states,
             attentions=backbone_outputs.attentions,
             depth_decoder_logits=depth_decoder_outputs.logits if depth_decoder_outputs is not None else None,
-            depth_decoder_cache=depth_decoder_outputs.cache if depth_decoder_outputs is not None else None,
+            depth_decoder_past_key_values=depth_decoder_outputs.past_key_values
+            if depth_decoder_outputs is not None
+            else None,
             depth_decoder_hidden_states=depth_decoder_outputs.hidden_states
             if depth_decoder_outputs is not None
             else None,

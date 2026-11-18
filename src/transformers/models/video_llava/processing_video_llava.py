@@ -20,20 +20,22 @@ import numpy as np
 from ...image_utils import get_image_size, to_numpy_array
 from ...processing_utils import ProcessingKwargs, ProcessorMixin
 from ...utils import auto_docstring
-from ...utils.deprecation import deprecate_attr
+
+
+class VideoLlavaProcessorKwargs(ProcessingKwargs, total=False):
+    _defaults = {
+        "text_kwargs": {
+            "padding": False,
+        },
+        "common_kwargs": {
+            "return_tensors": "pt",
+        },
+    }
 
 
 @auto_docstring
 class VideoLlavaProcessor(ProcessorMixin):
-    text_kwargs = {
-        "return_tensors": "pt",
-    }
-    images_kwargs = {
-        "return_tensors": "pt",
-    }
-    videos_kwargs = {
-        "return_tensors": "pt",
-    }
+    valid_processor_kwargs = VideoLlavaProcessorKwargs
 
     def __init__(
         self,
@@ -72,8 +74,7 @@ class VideoLlavaProcessor(ProcessorMixin):
         super().__init__(image_processor, video_processor, tokenizer, chat_template=chat_template)
 
     def replace_image_token(self, image_inputs: dict, image_idx: int, **kwargs) -> str:
-        new_pixel_values = image_inputs.get("pixel_values")
-        image = image_inputs.get("pixel_values_images", new_pixel_values)[image_idx]
+        image = image_inputs["pixel_values_images"][image_idx]
         height, width = get_image_size(to_numpy_array(image))
         num_image_tokens = (height // self.patch_size) * (width // self.patch_size)
         num_image_tokens += self.num_additional_image_tokens
@@ -93,7 +94,5 @@ class VideoLlavaProcessor(ProcessorMixin):
         num_image_tokens += self.num_additional_image_tokens
         return self.video_token * (num_image_tokens * num_frames)
 
-
-__getattr__ = deprecate_attr(__name__, rename={"VideoLlavaProcessorKwargs": (ProcessingKwargs, "5.29.0")})
 
 __all__ = ["VideoLlavaProcessor"]

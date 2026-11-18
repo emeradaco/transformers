@@ -220,9 +220,7 @@ index) and batch encode each table with its questions. This will make sure that 
 You can then fine-tune [`TapasForQuestionAnswering`] as follows (shown here for the weak supervision for aggregation case):
 
 ```python
-from torch.optim import AdamW
-
-from transformers import TapasConfig, TapasForQuestionAnswering
+from transformers import AdamW, TapasConfig, TapasForQuestionAnswering
 
 
 # this is the default WTQ configuration

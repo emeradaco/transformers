@@ -22,9 +22,9 @@ from typing import Literal
 
 from huggingface_hub.dataclasses import strict
 
-from ...configuration_utils import PreTrainedConfig, SubConfigSpec
+from ...configuration_utils import PreTrainedConfig
 from ...utils import auto_docstring
-from ..auto import AutoConfig
+from ..auto import CONFIG_MAPPING, AutoConfig
 
 
 @auto_docstring(checkpoint="ModernVBERT/modernvbert")
@@ -58,10 +58,7 @@ class ModernVBertConfig(PreTrainedConfig):
     ```"""
 
     model_type = "modernvbert"
-    sub_configs_defaults = {
-        "text_config": SubConfigSpec(config_class=AutoConfig, model_type="modernbert"),
-        "vision_config": SubConfigSpec(config_class=AutoConfig, model_type="siglip_vision_model"),
-    }
+    sub_configs = {"text_config": AutoConfig, "vision_config": AutoConfig}
 
     text_config: PreTrainedConfig | dict | None = None
     vision_config: PreTrainedConfig | dict | None = None
@@ -73,6 +70,19 @@ class ModernVBertConfig(PreTrainedConfig):
     classifier_dropout: float | int = 0.0
     classifier_bias: bool = False
     tie_word_embeddings: bool = False
+
+    def __post_init__(self, **kwargs):
+        if self.text_config is None:
+            self.text_config = CONFIG_MAPPING["modernbert"]()
+        elif isinstance(self.text_config, dict):
+            self.text_config = CONFIG_MAPPING["modernbert"](**self.text_config)
+
+        if self.vision_config is None:
+            self.vision_config = CONFIG_MAPPING["siglip_vision_model"]()
+        elif isinstance(self.vision_config, dict):
+            self.vision_config = CONFIG_MAPPING["siglip_vision_model"](**self.vision_config)
+
+        super().__post_init__(**kwargs)
 
 
 __all__ = ["ModernVBertConfig"]

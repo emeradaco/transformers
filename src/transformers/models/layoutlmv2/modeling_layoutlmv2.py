@@ -423,6 +423,7 @@ class LayoutLMv2PreTrainedModel(PreTrainedModel):
     base_model_prefix = "layoutlmv2"
     input_modalities = ("image", "text")
 
+    @torch.no_grad()
     def _init_weights(self, module):
         """Initialize the weights"""
         super()._init_weights(module)
@@ -550,7 +551,7 @@ class LayoutLMv2Pooler(nn.Module):
 class LayoutLMv2Model(LayoutLMv2PreTrainedModel):
     _can_record_outputs = {"hidden_states": LayoutLMv2Layer, "attentions": LayoutLMv2SelfAttention}
 
-    def __init__(self, config: LayoutLMv2Config):
+    def __init__(self, config):
         requires_backends(self, "detectron2")
         super().__init__(config)
         self.config = config
@@ -666,11 +667,11 @@ class LayoutLMv2Model(LayoutLMv2PreTrainedModel):
         self,
         input_ids: torch.LongTensor | None = None,
         bbox: torch.LongTensor | None = None,
-        image: torch.Tensor | None = None,
-        attention_mask: torch.Tensor | None = None,
+        image: torch.FloatTensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         token_type_ids: torch.LongTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple | BaseModelOutputWithPooling:
         r"""
@@ -679,7 +680,7 @@ class LayoutLMv2Model(LayoutLMv2PreTrainedModel):
             config.max_2d_position_embeddings-1]`. Each bounding box should be a normalized version in (x0, y0, x1, y1)
             format, where (x0, y0) corresponds to the position of the upper left corner in the bounding box, and (x1,
             y1) represents the position of the lower right corner.
-        image (`torch.Tensor` of shape `(batch_size, num_channels, height, width)` or `detectron.structures.ImageList` whose `tensors` is of shape `(batch_size, num_channels, height, width)`):
+        image (`torch.FloatTensor` of shape `(batch_size, num_channels, height, width)` or `detectron.structures.ImageList` whose `tensors` is of shape `(batch_size, num_channels, height, width)`):
             Batch of document images.
 
         Examples:
@@ -789,7 +790,7 @@ class LayoutLMv2Model(LayoutLMv2PreTrainedModel):
     """
 )
 class LayoutLMv2ForSequenceClassification(LayoutLMv2PreTrainedModel):
-    def __init__(self, config: LayoutLMv2Config):
+    def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.layoutlmv2 = LayoutLMv2Model(config)
@@ -808,11 +809,11 @@ class LayoutLMv2ForSequenceClassification(LayoutLMv2PreTrainedModel):
         self,
         input_ids: torch.LongTensor | None = None,
         bbox: torch.LongTensor | None = None,
-        image: torch.Tensor | None = None,
-        attention_mask: torch.Tensor | None = None,
+        image: torch.FloatTensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         token_type_ids: torch.LongTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple | SequenceClassifierOutput:
@@ -829,7 +830,7 @@ class LayoutLMv2ForSequenceClassification(LayoutLMv2PreTrainedModel):
             config.max_2d_position_embeddings-1]`. Each bounding box should be a normalized version in (x0, y0, x1, y1)
             format, where (x0, y0) corresponds to the position of the upper left corner in the bounding box, and (x1,
             y1) represents the position of the lower right corner.
-        image (`torch.Tensor` of shape `(batch_size, num_channels, height, width)` or `detectron.structures.ImageList` whose `tensors` is of shape `(batch_size, num_channels, height, width)`):
+        image (`torch.FloatTensor` of shape `(batch_size, num_channels, height, width)` or `detectron.structures.ImageList` whose `tensors` is of shape `(batch_size, num_channels, height, width)`):
             Batch of document images.
         token_type_ids (`torch.LongTensor` of shape `batch_size, sequence_length`, *optional*):
             Segment token indices to indicate first and second portions of the inputs. Indices are selected in `[0,
@@ -844,6 +845,10 @@ class LayoutLMv2ForSequenceClassification(LayoutLMv2PreTrainedModel):
             config.max_position_embeddings - 1]`.
 
             [What are position IDs?](../glossary#position-ids)
+        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
+            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
+            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
+            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
 
         Example:
 
@@ -983,7 +988,7 @@ class LayoutLMv2ForSequenceClassification(LayoutLMv2PreTrainedModel):
     """
 )
 class LayoutLMv2ForTokenClassification(LayoutLMv2PreTrainedModel):
-    def __init__(self, config: LayoutLMv2Config):
+    def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
         self.layoutlmv2 = LayoutLMv2Model(config)
@@ -1002,11 +1007,11 @@ class LayoutLMv2ForTokenClassification(LayoutLMv2PreTrainedModel):
         self,
         input_ids: torch.LongTensor | None = None,
         bbox: torch.LongTensor | None = None,
-        image: torch.Tensor | None = None,
-        attention_mask: torch.Tensor | None = None,
+        image: torch.FloatTensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         token_type_ids: torch.LongTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         labels: torch.LongTensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> tuple | TokenClassifierOutput:
@@ -1023,7 +1028,7 @@ class LayoutLMv2ForTokenClassification(LayoutLMv2PreTrainedModel):
             config.max_2d_position_embeddings-1]`. Each bounding box should be a normalized version in (x0, y0, x1, y1)
             format, where (x0, y0) corresponds to the position of the upper left corner in the bounding box, and (x1,
             y1) represents the position of the lower right corner.
-        image (`torch.Tensor` of shape `(batch_size, num_channels, height, width)` or `detectron.structures.ImageList` whose `tensors` is of shape `(batch_size, num_channels, height, width)`):
+        image (`torch.FloatTensor` of shape `(batch_size, num_channels, height, width)` or `detectron.structures.ImageList` whose `tensors` is of shape `(batch_size, num_channels, height, width)`):
             Batch of document images.
         token_type_ids (`torch.LongTensor` of shape `batch_size, sequence_length`, *optional*):
             Segment token indices to indicate first and second portions of the inputs. Indices are selected in `[0,
@@ -1038,6 +1043,8 @@ class LayoutLMv2ForTokenClassification(LayoutLMv2PreTrainedModel):
             config.max_position_embeddings - 1]`.
 
             [What are position IDs?](../glossary#position-ids)
+        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Labels for computing the token classification loss. Indices should be in `[0, ..., config.num_labels - 1]`.
 
         Example:
 
@@ -1118,7 +1125,7 @@ class LayoutLMv2ForTokenClassification(LayoutLMv2PreTrainedModel):
 
 @auto_docstring
 class LayoutLMv2ForQuestionAnswering(LayoutLMv2PreTrainedModel):
-    def __init__(self, config: LayoutLMv2Config, has_visual_segment_embedding=True):
+    def __init__(self, config, has_visual_segment_embedding=True):
         r"""
         has_visual_segment_embedding (`bool`, *optional*, defaults to `True`):
             Whether or not to add visual segment embeddings.
@@ -1141,11 +1148,11 @@ class LayoutLMv2ForQuestionAnswering(LayoutLMv2PreTrainedModel):
         self,
         input_ids: torch.LongTensor | None = None,
         bbox: torch.LongTensor | None = None,
-        image: torch.Tensor | None = None,
-        attention_mask: torch.Tensor | None = None,
+        image: torch.FloatTensor | None = None,
+        attention_mask: torch.FloatTensor | None = None,
         token_type_ids: torch.LongTensor | None = None,
         position_ids: torch.LongTensor | None = None,
-        inputs_embeds: torch.Tensor | None = None,
+        inputs_embeds: torch.FloatTensor | None = None,
         start_positions: torch.LongTensor | None = None,
         end_positions: torch.LongTensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
@@ -1163,7 +1170,7 @@ class LayoutLMv2ForQuestionAnswering(LayoutLMv2PreTrainedModel):
             config.max_2d_position_embeddings-1]`. Each bounding box should be a normalized version in (x0, y0, x1, y1)
             format, where (x0, y0) corresponds to the position of the upper left corner in the bounding box, and (x1,
             y1) represents the position of the lower right corner.
-        image (`torch.Tensor` of shape `(batch_size, num_channels, height, width)` or `detectron.structures.ImageList` whose `tensors` is of shape `(batch_size, num_channels, height, width)`):
+        image (`torch.FloatTensor` of shape `(batch_size, num_channels, height, width)` or `detectron.structures.ImageList` whose `tensors` is of shape `(batch_size, num_channels, height, width)`):
             Batch of document images.
         token_type_ids (`torch.LongTensor` of shape `batch_size, sequence_length`, *optional*):
             Segment token indices to indicate first and second portions of the inputs. Indices are selected in `[0,

@@ -192,6 +192,7 @@ def merge_and_shard_weights(src_root: Path, dst_root: Path, processor: MusicFlam
         audio_bos_token_id=vocab.get("<|sound_bos|>"),
         audio_eos_token_id=vocab.get("<|sound_eos|>"),
     )
+    model = MusicFlamingoForConditionalGeneration(config).to(dtype=torch.bfloat16)
 
     # Update state dict to new key names if necessary
     projector_key_mapping = {
@@ -207,16 +208,14 @@ def merge_and_shard_weights(src_root: Path, dst_root: Path, processor: MusicFlam
     # Llama-style rotary caches `inv_freq` as a non-persistent buffer, so we do not load/save it in the checkpoint.
     state.pop("audio_tower.sound_tower.pos_emb.freqs", None)
 
-    # Load weights so we can push via `push_to_hub` later.
-    model, loading_info = MusicFlamingoForConditionalGeneration.from_pretrained(
-        None, config=config, state_dict=state, dtype=torch.bfloat16, output_loading_info=True
-    )
+    # Load weights into the instantiated model so we can push via `push_to_hub` later.
+    load_res = model.load_state_dict(state, strict=True)
     # Enforce a clean load
-    if loading_info["missing_keys"]:
-        mk = sorted(loading_info["missing_keys"])
+    if getattr(load_res, "missing_keys", None) and load_res.missing_keys:
+        mk = load_res.missing_keys
         raise ValueError(f"Missing keys when loading: {mk[:10]}{' ...' if len(mk) > 10 else ''}")
-    if loading_info["unexpected_keys"]:
-        uk = sorted(loading_info["unexpected_keys"])
+    if getattr(load_res, "unexpected_keys", None) and load_res.unexpected_keys:
+        uk = load_res.unexpected_keys
         raise ValueError(f"Unexpected keys when loading: {uk[:10]}{' ...' if len(uk) > 10 else ''}")
 
     model.generation_config = GenerationConfig(
@@ -253,7 +252,7 @@ python src/transformers/models/musicflamingo/convert_audioflamingonext_to_hf.py 
   --dst_dir audio-flamingo-next-hf
 ```
 
-3) Convert and push directly to the Hub (requires `hf auth login` or `HF_TOKEN`):
+3) Convert and push directly to the Hub (requires `huggingface-cli login` or `HF_TOKEN`):
 
 ```
 python src/transformers/models/musicflamingo/convert_audioflamingonext_to_hf.py \

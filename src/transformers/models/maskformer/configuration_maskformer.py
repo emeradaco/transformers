@@ -19,9 +19,10 @@
 # limitations under the License.
 from huggingface_hub.dataclasses import strict
 
-from ...configuration_utils import PreTrainedConfig, SubConfigSpec
+from ...backbone_utils import consolidate_backbone_kwargs_to_config
+from ...configuration_utils import PreTrainedConfig
 from ...utils import auto_docstring, logging
-from ..auto import AutoConfig
+from ..auto import CONFIG_MAPPING, AutoConfig
 
 
 logger = logging.get_logger(__name__)
@@ -56,14 +57,8 @@ class MaskFormerDetrConfig(PreTrainedConfig):
     ```"""
 
     model_type = "detr"
-    sub_configs_defaults = {
-        "backbone_config": SubConfigSpec(
-            config_class=AutoConfig,
-            model_type="resnet",
-            init_kwargs={"out_features": ["stage4"]},
-        ),
-    }
-    keys_to_ignore_at_inference = ["cache"]
+    sub_configs = {"backbone_config": AutoConfig}
+    keys_to_ignore_at_inference = ["past_key_values"]
     attribute_map = {
         "hidden_size": "d_model",
         "num_attention_heads": "encoder_attention_heads",
@@ -102,22 +97,24 @@ class MaskFormerDetrConfig(PreTrainedConfig):
     eos_coefficient: float = 0.1
 
     def __post_init__(self, **kwargs):
-        if (
-            self.backbone_config is None
-            and kwargs.pop("use_timm_backbone", True)
-            and not kwargs.get("backbone_kwargs")
-        ):
-            backbone_kwargs = kwargs.get("backbone_kwargs", {})
-            self.backbone_config = {
-                "model_type": "timm_backbone",
-                "backbone": kwargs.pop("backbone", None) or "resnet50",
-                "num_channels": backbone_kwargs.get("num_channels", self.num_channels),
-                "features_only": True,
-                "use_pretrained_backbone": False,
-                "out_indices": backbone_kwargs.get("out_indices", [1, 2, 3, 4]),
-            }
-            if self.dilation:
-                self.backbone_config["output_stride"] = backbone_kwargs.get("output_stride", 16)
+        backbone_kwargs = kwargs.get("backbone_kwargs", {})
+        timm_default_kwargs = {
+            "num_channels": backbone_kwargs.get("num_channels", self.num_channels),
+            "features_only": True,
+            "use_pretrained_backbone": False,
+            "out_indices": backbone_kwargs.get("out_indices", [1, 2, 3, 4]),
+        }
+        if self.dilation:
+            timm_default_kwargs["output_stride"] = backbone_kwargs.get("output_stride", 16)
+
+        self.backbone_config, kwargs = consolidate_backbone_kwargs_to_config(
+            backbone_config=self.backbone_config,
+            default_backbone="resnet50",
+            default_config_type="resnet",
+            default_config_kwargs={"out_features": ["stage4"]},
+            timm_default_kwargs=timm_default_kwargs,
+            **kwargs,
+        )
         super().__post_init__(**kwargs)
 
 
@@ -161,22 +158,7 @@ class MaskFormerConfig(PreTrainedConfig):
     """
 
     model_type = "maskformer"
-    sub_configs_defaults = {
-        "backbone_config": SubConfigSpec(
-            config_class=AutoConfig,
-            model_type="swin",
-            init_kwargs={
-                "depths": [2, 2, 18, 2],
-                "drop_path_rate": 0.3,
-                "image_size": 384,
-                "embed_dim": 128,
-                "num_heads": [4, 8, 16, 32],
-                "window_size": 12,
-                "out_features": ["stage1", "stage2", "stage3", "stage4"],
-            },
-        ),
-        "decoder_config": SubConfigSpec(config_class=AutoConfig, model_type="detr"),
-    }
+    sub_configs = {"backbone_config": AutoConfig, "decoder_config": AutoConfig}
     attribute_map = {"hidden_size": "mask_feature_size"}
     backbones_supported = ["resnet", "swin"]
     decoders_supported = ["detr"]
@@ -195,22 +177,50 @@ class MaskFormerConfig(PreTrainedConfig):
     output_auxiliary_logits: bool | None = None
 
     def __post_init__(self, **kwargs):
-        super().__post_init__(**kwargs)
-        self.num_attention_heads = self.decoder_config.encoder_attention_heads
-        self.num_hidden_layers = self.decoder_config.num_hidden_layers
+        self.backbone_config, kwargs = consolidate_backbone_kwargs_to_config(
+            backbone_config=self.backbone_config,
+            default_config_type="swin",
+            default_config_kwargs={
+                "depths": [2, 2, 18, 2],
+                "drop_path_rate": 0.3,
+                "image_size": 384,
+                "embed_dim": 128,
+                "num_heads": [4, 8, 16, 32],
+                "window_size": 12,
+                "out_features": ["stage1", "stage2", "stage3", "stage4"],
+            },
+            **kwargs,
+        )
 
-    def validate_architecture(self):
-        super().validate_architecture()
-        if self.backbone_config.model_type not in self.backbones_supported:
+        # verify that the backbone is supported
+        if self.backbone_config is not None and self.backbone_config.model_type not in self.backbones_supported:
             logger.warning_once(
-                f"Backbone {self.backbone_config.model_type} is not a supported model and may not be compatible with Mask2Former. "
+                f"Backbone {self.backbone_config.model_type} is not a supported model and may not be compatible with MaskFormer. "
                 f"Supported model types: {','.join(self.backbones_supported)}"
             )
-        if self.decoder_config.model_type not in self.decoders_supported:
-            raise ValueError(
-                f"Transformer Decoder {self.decoder_config.model_type} not supported, please use one of"
-                f" {','.join(self.decoders_supported)}"
+
+        if self.decoder_config is None:
+            # fall back to https://huggingface.co/facebook/detr-resnet-50
+            self.decoder_config = MaskFormerDetrConfig()
+        else:
+            # verify that the decoder is supported
+            decoder_type = (
+                self.decoder_config.pop("model_type")
+                if isinstance(self.decoder_config, dict)
+                else self.decoder_config.model_type
             )
+            if decoder_type not in self.decoders_supported:
+                raise ValueError(
+                    f"Transformer Decoder {decoder_type} not supported, please use one of"
+                    f" {','.join(self.decoders_supported)}"
+                )
+            if isinstance(self.decoder_config, dict):
+                config_class = CONFIG_MAPPING[decoder_type]
+                self.decoder_config = config_class.from_dict(self.decoder_config)
+
+        self.num_attention_heads = self.decoder_config.encoder_attention_heads
+        self.num_hidden_layers = self.decoder_config.num_hidden_layers
+        super().__post_init__(**kwargs)
 
 
 __all__ = ["MaskFormerConfig", "MaskFormerDetrConfig"]

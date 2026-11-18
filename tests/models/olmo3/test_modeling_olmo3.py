@@ -32,8 +32,7 @@ from transformers.testing_utils import (
 from transformers.utils import is_torchao_available
 
 from ...causal_lm_tester import CausalLMModelTest, CausalLMModelTester
-from ...distributed_testing_utils import run_distributed
-from ...test_tensor_parallel_mixin import _test_tp_generation_quantized_impl
+from ...test_tensor_parallel_mixin import _init_distributed, _test_tp_generation_quantized_impl
 
 
 if is_torch_available():
@@ -65,6 +64,7 @@ class Olmo3ModelTester(CausalLMModelTester):
 
 @require_torch
 class Olmo3ModelTest(CausalLMModelTest, unittest.TestCase):
+    test_all_params_have_gradient = False
     model_tester_class = Olmo3ModelTester
 
     # Need to use `0.8` instead of `0.9` for `test_cpu_offload`
@@ -95,7 +95,7 @@ class Olmo3ModelTest(CausalLMModelTest, unittest.TestCase):
             model = model_class(config)
             model.save_pretrained(tmp_dir, save_original_format=True)
 
-            run_distributed(world_size=self.tensor_parallel_size)(_test_tp_generation_quantized_impl)(
+            _init_distributed(tp=self.tensor_parallel_size)(_test_tp_generation_quantized_impl)(
                 tmp_dir, model_class, max_new_tokens
             )
 

@@ -47,7 +47,7 @@ def get_train_dataloader(self):
     }
 ```
 
-## Compute loss
+## compute_loss
 
 [`~Trainer.compute_loss`] returns the cross-entropy loss calculated by the model.
 

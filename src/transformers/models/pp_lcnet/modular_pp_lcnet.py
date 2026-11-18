@@ -39,6 +39,7 @@ from ...utils import (
     can_return_tuple,
 )
 from ...utils.generic import TensorType, merge_with_config_defaults
+from ...utils.import_utils import requires
 from ...utils.output_capturing import capture_outputs
 from ..mobilenet_v2.modeling_mobilenet_v2 import make_divisible
 from ..resnet.modeling_resnet import ResNetConvLayer
@@ -137,6 +138,7 @@ class PPLCNetImageProcessorKwargs(ImagesKwargs, total=False):
 
 
 @auto_docstring
+@requires(backends=("torch",))
 class PPLCNetImageProcessor(TorchvisionBackend):
     resample = 2
     image_mean = [0.406, 0.456, 0.485]
@@ -493,14 +495,14 @@ class PPLCNetForImageClassification(PPLCNetPreTrainedModel):
     @auto_docstring
     def forward(
         self,
-        pixel_values: torch.Tensor | None = None,
+        pixel_values: torch.FloatTensor | None = None,
         **kwargs: Unpack[TransformersKwargs],
     ) -> BaseModelOutputWithNoAttention:
         r"""
         Examples:
 
         ```python
-        >>> from huggingface_hub.utils import httpx
+        >>> import httpx
         >>> from io import BytesIO
         >>> from PIL import Image
         >>> from transformers import AutoModelForImageClassification, AutoImageProcessor

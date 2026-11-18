@@ -17,7 +17,7 @@ import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from huggingface_hub.utils import httpx
+import httpx
 
 from transformers.utils.network_logging import (
     _clear_network_debug_report,

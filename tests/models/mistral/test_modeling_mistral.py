@@ -245,6 +245,24 @@ class MistralIntegrationTest(unittest.TestCase):
         static_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
         self.assertEqual(EXPECTED_TEXT_COMPLETION, static_text)
 
+        # Static Cache + compile
+        forward_function = model.__call__
+        model.__call__ = torch.compile(forward_function, mode="reduce-overhead", fullgraph=True)
+        generated_ids = model.generate(
+            **inputs, max_new_tokens=NUM_TOKENS_TO_GENERATE, do_sample=False, cache_implementation="static"
+        )
+        static_compiled_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+        self.assertEqual(EXPECTED_TEXT_COMPLETION, static_compiled_text)
+
+        # Sliding Window Cache + compile
+        torch._dynamo.reset()
+        model.__call__ = torch.compile(forward_function, mode="reduce-overhead", fullgraph=True)
+        generated_ids = model.generate(
+            **inputs, max_new_tokens=NUM_TOKENS_TO_GENERATE, do_sample=False, cache_implementation="sliding_window"
+        )
+        static_compiled_text = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
+        self.assertEqual(EXPECTED_TEXT_COMPLETION, static_compiled_text)
+
     @pytest.mark.flash_attn_test
     @parameterized.expand([("flash_attention_2",), ("sdpa",), ("flex_attention",), ("eager",)])
     @require_flash_attn
@@ -292,7 +310,7 @@ class MistralIntegrationTest(unittest.TestCase):
         self.assertEqual(output_text, EXPECTED_COMPLETIONS[:batch_size])
 
         # Let's check that the dynamic cache has hybrid layers!
-        dynamic_cache = out.cache
+        dynamic_cache = out.past_key_values
         self.assertTrue(isinstance(dynamic_cache, DynamicCache))
         for layer in dynamic_cache.layers:
             self.assertTrue(isinstance(layer, DynamicSlidingWindowLayer))
@@ -420,13 +438,15 @@ class Mask4DTestHard(unittest.TestCase):
         mask_1a = mask_shared_prefix[:, :, :part_a, :part_a]
 
         outs_1a = self.model.forward(input_1a, attention_mask=mask_1a, position_ids=position_ids_1a)
-        cache_a = outs_1a["cache"]
+        past_key_values_a = outs_1a["past_key_values"]
 
         # Case 1: we pass a 4D attention mask regarding the current sequence length (i.e. [..., seq_len, full_len])
         input_1b = input_ids_shared_prefix[:, part_a:]
         position_ids_1b = position_ids_shared_prefix[:, part_a:]
         mask_1b = mask_shared_prefix[:, :, part_a:, :]
-        outs_1b = self.model.forward(input_1b, attention_mask=mask_1b, position_ids=position_ids_1b, cache=cache_a)
+        outs_1b = self.model.forward(
+            input_1b, attention_mask=mask_1b, position_ids=position_ids_1b, past_key_values=past_key_values_a
+        )
         decoded_1b = [
             self.tokenizer.decode(t)
             for t in outs_1b.logits.argmax(-1)[

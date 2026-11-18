@@ -1,7 +1,4 @@
-# check=skip=InvalidDefaultArgInFrom
-# Set from the repo's `.python-version` by the build workflow
-ARG PYTHON_VERSION
-FROM python:${PYTHON_VERSION}
+FROM python:3.10
 LABEL maintainer="Hugging Face"
 
 RUN apt update

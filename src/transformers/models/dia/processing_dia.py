@@ -59,6 +59,24 @@ class DiaAudioKwargs(AudioKwargs, total=False):
 
 class DiaProcessorKwargs(ProcessingKwargs, total=False):
     audio_kwargs: DiaAudioKwargs
+    _defaults = {
+        "text_kwargs": {
+            "padding": True,
+            "padding_side": "right",
+            "add_special_tokens": False,
+        },
+        "audio_kwargs": {
+            "eos_token_id": 1024,
+            "pad_token_id": 1025,
+            "bos_token_id": 1026,
+            "delay_pattern": [0, 8, 9, 10, 11, 12, 13, 14, 15],
+            "generation": True,
+            "sampling_rate": 44100,
+        },
+        "common_kwargs": {
+            "return_tensors": "pt",
+        },
+    }
 
 
 @requires(backends=("torch",))
@@ -66,22 +84,6 @@ class DiaProcessorKwargs(ProcessingKwargs, total=False):
 class DiaProcessor(ProcessorMixin):
     audio_tokenizer_class = "DacModel"
     valid_processor_kwargs = DiaProcessorKwargs
-
-    text_kwargs = {
-        "padding": True,
-        "padding_side": "right",
-        "add_special_tokens": False,
-        "return_tensors": "pt",
-    }
-    audio_kwargs = {
-        "eos_token_id": 1024,
-        "pad_token_id": 1025,
-        "bos_token_id": 1026,
-        "delay_pattern": [0, 8, 9, 10, 11, 12, 13, 14, 15],
-        "generation": True,
-        "sampling_rate": 44100,
-        "return_tensors": "pt",
-    }
 
     def __init__(self, feature_extractor, tokenizer, audio_tokenizer):
         r"""
@@ -144,7 +146,6 @@ class DiaProcessor(ProcessorMixin):
         self,
         text: str | list[str],
         audio: AudioInput | None = None,
-        # Should be a processor kwarg but needs to stay for BC.
         output_labels: bool | None = False,
         **kwargs: Unpack[DiaProcessorKwargs],
     ):
@@ -155,7 +156,7 @@ class DiaProcessor(ProcessorMixin):
             computation (padding and BOS tokens), and `-101` for audio frames used only for the backbone model (when
             `depth_decoder_labels_ratio < 1.0`). Cannot be used together with `generation=True`.
         """
-        output_kwargs = self._merge_kwargs(**kwargs)
+        output_kwargs = self._merge_kwargs(DiaProcessorKwargs, **kwargs)
         audio_kwargs = output_kwargs["audio_kwargs"]
         generation = audio_kwargs.get("generation", True)
         return_tensors = output_kwargs["text_kwargs"].get("return_tensors", None)
@@ -258,6 +259,7 @@ class DiaProcessor(ProcessorMixin):
             audio_prompt_len (`int`): The audio prefix length (e.g. when using voice cloning).
         """
         output_kwargs = self._merge_kwargs(
+            DiaProcessorKwargs,
             **kwargs,
         )
         audio_kwargs = output_kwargs["audio_kwargs"]
@@ -337,6 +339,7 @@ class DiaProcessor(ProcessorMixin):
     ) -> int:
         """Utility function to get the audio prompt length."""
         output_kwargs = self._merge_kwargs(
+            DiaProcessorKwargs,
             **kwargs,
         )
         audio_kwargs = output_kwargs["audio_kwargs"]
@@ -372,6 +375,7 @@ class DiaProcessor(ProcessorMixin):
             raise ValueError("The number of audio and saving paths must be the same")
 
         output_kwargs = self._merge_kwargs(
+            DiaProcessorKwargs,
             **kwargs,
         )
         audio_kwargs = output_kwargs["audio_kwargs"]
